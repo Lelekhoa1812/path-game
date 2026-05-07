@@ -1,0 +1,1552 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
+<title>Cosmic Path · Zip</title>
+<style>
+  :root {
+    --bg: #000000;
+    --panel: rgba(8, 8, 12, 0.82);
+    --panel-solid: #0a0a10;
+    --border: rgba(181, 123, 255, 0.30);
+    --text: #ffffff;
+    --muted: #a8a8b8;
+    --zip: #B57BFF;
+    --zip-hover: #8B4FE8;
+    --zip-soft: rgba(181, 123, 255, 0.14);
+    --accent: #ff43c4;
+    --accent2: #00e0ff;
+    --accent3: #ffd24a;
+    --shadow: 0 0 24px rgba(181, 123, 255, 0.18), 0 8px 32px rgba(0, 0, 0, 0.7);
+    --error: #ff3b6b;
+    --obstacle: #050508;
+  }
+
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    background: #000;
+    color: var(--text);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    user-select: none;
+    -webkit-user-select: none;
+    position: relative;
+  }
+
+  /* Animated starfield — three drifting layers */
+  .stars {
+    position: fixed;
+    inset: -50%;
+    pointer-events: none;
+    z-index: 0;
+    width: 200%;
+    height: 200%;
+  }
+  .stars.layer1 {
+    background-image:
+      radial-gradient(1px 1px at 12% 18%, #fff, transparent 60%),
+      radial-gradient(1px 1px at 27% 62%, #fff, transparent 60%),
+      radial-gradient(1.5px 1.5px at 44% 31%, #fff, transparent 60%),
+      radial-gradient(1px 1px at 61% 78%, #cdfaff, transparent 60%),
+      radial-gradient(1px 1px at 76% 12%, #fff, transparent 60%),
+      radial-gradient(1.5px 1.5px at 89% 55%, #ffe3f7, transparent 60%),
+      radial-gradient(1px 1px at 8% 88%, #fff, transparent 60%),
+      radial-gradient(1px 1px at 35% 92%, #fff, transparent 60%),
+      radial-gradient(1px 1px at 53% 8%, #fff, transparent 60%),
+      radial-gradient(1px 1px at 95% 84%, #fff, transparent 60%),
+      radial-gradient(1px 1px at 18% 45%, #fff, transparent 60%),
+      radial-gradient(1px 1px at 67% 38%, #fff, transparent 60%);
+    background-size: 50% 50%;
+    background-repeat: repeat;
+    animation: drift1 120s linear infinite, twinkle 5s ease-in-out infinite alternate;
+  }
+  .stars.layer2 {
+    background-image:
+      radial-gradient(1.5px 1.5px at 22% 45%, #fff, transparent 60%),
+      radial-gradient(1.5px 1.5px at 48% 70%, #cdfaff, transparent 60%),
+      radial-gradient(2px 2px at 67% 25%, #fff, transparent 60%),
+      radial-gradient(1.5px 1.5px at 82% 67%, #fff, transparent 60%),
+      radial-gradient(2px 2px at 16% 33%, #fff, transparent 60%),
+      radial-gradient(1.5px 1.5px at 38% 14%, #ffe3f7, transparent 60%),
+      radial-gradient(2px 2px at 72% 88%, #fff, transparent 60%),
+      radial-gradient(1.5px 1.5px at 91% 22%, #fff, transparent 60%);
+    background-size: 60% 60%;
+    background-repeat: repeat;
+    animation: drift2 90s linear infinite, twinkle 7s ease-in-out infinite alternate;
+    animation-delay: 0s, 1.5s;
+  }
+  .stars.layer3 {
+    background-image:
+      radial-gradient(2.5px 2.5px at 30% 50%, #fff, transparent 60%),
+      radial-gradient(2.5px 2.5px at 70% 30%, #cdfaff, transparent 60%),
+      radial-gradient(3px 3px at 50% 80%, #fff, transparent 60%),
+      radial-gradient(2.5px 2.5px at 85% 60%, #ffe3f7, transparent 60%),
+      radial-gradient(3px 3px at 15% 75%, #fff, transparent 60%);
+    background-size: 70% 70%;
+    background-repeat: repeat;
+    animation: drift3 60s linear infinite, twinkle 4s ease-in-out infinite alternate;
+  }
+  @keyframes drift1 {
+    from { transform: translate(0, 0); }
+    to   { transform: translate(-25%, -15%); }
+  }
+  @keyframes drift2 {
+    from { transform: translate(0, 0); }
+    to   { transform: translate(20%, -25%); }
+  }
+  @keyframes drift3 {
+    from { transform: translate(0, 0); }
+    to   { transform: translate(-15%, 20%); }
+  }
+  @keyframes twinkle {
+    0%   { opacity: 0.5; }
+    100% { opacity: 1; }
+  }
+
+  /* Shooting stars */
+  .shooting-star {
+    position: fixed;
+    top: 20%;
+    left: -10%;
+    width: 120px;
+    height: 1.5px;
+    background: linear-gradient(90deg, transparent, #fff, transparent);
+    z-index: 0;
+    pointer-events: none;
+    opacity: 0;
+    filter: drop-shadow(0 0 4px #fff);
+    animation: shoot 8s linear infinite;
+  }
+  .shooting-star.s2 { top: 55%; animation-delay: 3s; animation-duration: 11s; }
+  .shooting-star.s3 { top: 78%; animation-delay: 6s; animation-duration: 9s; }
+  @keyframes shoot {
+    0%   { transform: translate(0, 0) rotate(15deg); opacity: 0; }
+    5%   { opacity: 1; }
+    40%  { opacity: 1; }
+    50%  { transform: translate(120vw, 30vh) rotate(15deg); opacity: 0; }
+    100% { transform: translate(120vw, 30vh) rotate(15deg); opacity: 0; }
+  }
+
+  header.top, main.board-wrap, footer.bottom { position: relative; z-index: 1; }
+
+  header.top {
+    background: rgba(0, 0, 0, 0.65);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+    border-bottom: 1px solid rgba(181, 123, 255, 0.25);
+    padding: 12px 22px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.6);
+    z-index: 5;
+  }
+
+  .brand {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    font-weight: 800;
+    font-size: 19px;
+    color: #fff;
+    letter-spacing: 0.5px;
+    text-shadow: 0 0 10px rgba(255, 255, 255, 0.4);
+  }
+  .brand .logo {
+    width: 46px; height: 30px;
+    background: #000;
+    color: var(--zip);
+    border-radius: 8px;
+    display: grid;
+    place-items: center;
+    font-weight: 900;
+    font-size: 15px;
+    letter-spacing: -0.5px;
+    font-family: -apple-system, "Segoe UI", sans-serif;
+    border: 1.5px solid var(--zip);
+    box-shadow: 0 0 14px rgba(181, 123, 255, 0.55), inset 0 0 8px rgba(181, 123, 255, 0.12);
+    text-shadow: 0 0 6px var(--zip);
+    position: relative;
+  }
+
+  .stats {
+    display: flex;
+    gap: 18px;
+    align-items: center;
+    font-size: 14px;
+  }
+  .stat {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    line-height: 1.1;
+  }
+  .stat .label {
+    font-size: 11px;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+  .stat .value {
+    font-weight: 600;
+    font-size: 15px;
+  }
+  .difficulty {
+    padding: 5px 12px;
+    border-radius: 999px;
+    font-size: 12px;
+    font-weight: 700;
+    background: var(--zip-soft);
+    color: var(--zip);
+    border: 1px solid rgba(181, 123, 255, 0.5);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    box-shadow: 0 0 12px rgba(181, 123, 255, 0.25);
+  }
+  .difficulty.hard {
+    background: rgba(255, 210, 74, 0.15);
+    color: var(--accent3);
+    border-color: rgba(255, 210, 74, 0.5);
+    box-shadow: 0 0 12px rgba(255, 210, 74, 0.3);
+  }
+  .help-btn {
+    width: 30px; height: 30px;
+    border-radius: 50%;
+    background: rgba(0, 0, 0, 0.6);
+    color: var(--zip);
+    border: 1.5px solid var(--zip);
+    font-weight: 800;
+    font-size: 16px;
+    cursor: pointer;
+    display: grid;
+    place-items: center;
+    padding: 0;
+    line-height: 1;
+    box-shadow: 0 0 12px rgba(181, 123, 255, 0.4);
+    text-shadow: 0 0 6px var(--zip);
+    transition: transform 140ms ease, box-shadow 140ms ease, background 140ms ease;
+    margin-left: 4px;
+  }
+  .help-btn:hover {
+    transform: translateY(-1px) scale(1.05);
+    background: rgba(181, 123, 255, 0.18);
+    box-shadow: 0 0 18px rgba(181, 123, 255, 0.7);
+  }
+  .difficulty.expert {
+    background: rgba(255, 67, 196, 0.15);
+    color: var(--accent);
+    border-color: rgba(255, 67, 196, 0.55);
+    box-shadow: 0 0 12px rgba(255, 67, 196, 0.35);
+  }
+
+  main.board-wrap {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 16px;
+    min-height: 0;
+    position: relative;
+  }
+
+  .board {
+    background: rgba(0, 0, 0, 0.78);
+    border: 1px solid rgba(181, 123, 255, 0.35);
+    border-radius: 16px;
+    box-shadow:
+      0 0 40px rgba(181, 123, 255, 0.18),
+      0 0 80px rgba(0, 224, 255, 0.08),
+      inset 0 0 30px rgba(255, 255, 255, 0.03);
+    padding: 12px;
+    display: grid;
+    gap: 3px;
+    touch-action: none;
+    position: relative;
+  }
+
+  .cell {
+    background: rgba(255, 255, 255, 0.04);
+    border-radius: 6px;
+    position: relative;
+    transition: background 160ms ease, box-shadow 160ms ease;
+    display: grid;
+    place-items: center;
+    border: 1px solid rgba(255, 255, 255, 0.04);
+  }
+  .cell.filled {
+    background: rgba(181, 123, 255, 0.10);
+    box-shadow: inset 0 0 12px rgba(181, 123, 255, 0.15);
+  }
+  .cell.obstacle {
+    background:
+      radial-gradient(circle at 30% 30%, rgba(140, 60, 255, 0.4), transparent 60%),
+      var(--obstacle);
+    border: 1px solid rgba(140, 60, 255, 0.3);
+    box-shadow: inset 0 0 8px rgba(0, 0, 0, 0.6);
+  }
+  .cell.obstacle::after {
+    content: "";
+    position: absolute;
+    inset: 25%;
+    border-radius: 50%;
+    background: radial-gradient(circle, #fff, transparent 65%);
+    opacity: 0.4;
+  }
+
+  .number {
+    position: relative;
+    z-index: 3;
+    width: 82%;
+    height: 82%;
+    border-radius: 50%;
+    background: linear-gradient(135deg, #1a1144, #2a1668);
+    border: 2px solid var(--accent2);
+    color: var(--accent2);
+    font-weight: 800;
+    display: grid;
+    place-items: center;
+    font-size: 0.92em;
+    box-shadow:
+      0 0 12px rgba(0, 224, 255, 0.5),
+      inset 0 0 6px rgba(0, 224, 255, 0.2);
+    pointer-events: none;
+    line-height: 1;
+    text-shadow: 0 0 6px currentColor;
+  }
+  .number.start {
+    background: radial-gradient(circle at 30% 30%, #DCBFFF, #B57BFF 55%, #6B2FCC);
+    color: #0a0820;
+    border-color: #fff;
+    box-shadow: 0 0 18px var(--zip), 0 0 28px rgba(181, 123, 255, 0.6);
+    text-shadow: none;
+  }
+  .number.end {
+    background: radial-gradient(circle at 30% 30%, #ffb0e7, #ff43c4 55%, #c41e94);
+    color: #fff;
+    border-color: #fff;
+    box-shadow: 0 0 18px var(--accent), 0 0 28px rgba(255, 67, 196, 0.7);
+    text-shadow: 0 0 6px rgba(255, 255, 255, 0.6);
+  }
+  .number.reached {
+    background: radial-gradient(circle at 30% 30%, #DCBFFF, #B57BFF 55%, #6B2FCC);
+    color: #0a0820;
+    border-color: #fff;
+    box-shadow: 0 0 14px var(--zip);
+    text-shadow: none;
+  }
+  .number.next-target { animation: pulse 1.1s ease-in-out infinite; }
+  .number.wrong {
+    background: radial-gradient(circle, #ff708f, var(--error)) !important;
+    border-color: #fff !important;
+    color: #fff !important;
+    box-shadow: 0 0 18px var(--error) !important;
+    animation: shake 0.4s ease;
+  }
+  @keyframes shake {
+    0%, 100% { transform: translateX(0); }
+    20% { transform: translateX(-3px); }
+    40% { transform: translateX(3px); }
+    60% { transform: translateX(-2px); }
+    80% { transform: translateX(2px); }
+  }
+
+  @keyframes pulse {
+    0%, 100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(255, 210, 74, 0.7), 0 0 14px var(--accent3); }
+    50% { transform: scale(1.08); box-shadow: 0 0 0 12px rgba(255, 210, 74, 0), 0 0 22px var(--accent3); }
+  }
+
+  .seg {
+    position: absolute;
+    background: linear-gradient(90deg, #B57BFF, #00e0ff);
+    border-radius: 4px;
+    pointer-events: none;
+    z-index: 1;
+    box-shadow: 0 0 8px rgba(181, 123, 255, 0.6);
+  }
+  .seg.center {
+    inset: 28%;
+    border-radius: 50%;
+    background: radial-gradient(circle, #DCBFFF, #B57BFF 60%, #00e0ff);
+    box-shadow: 0 0 10px rgba(181, 123, 255, 0.8);
+  }
+
+  footer.bottom {
+    background: rgba(0, 0, 0, 0.65);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+    border-top: 1px solid rgba(181, 123, 255, 0.25);
+    padding: 12px 20px;
+    display: flex;
+    justify-content: center;
+    gap: 12px;
+  }
+  button {
+    font: inherit;
+    padding: 10px 22px;
+    border-radius: 999px;
+    border: 1px solid transparent;
+    cursor: pointer;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    transition: transform 140ms ease, box-shadow 140ms ease, background 140ms ease;
+  }
+  button.primary {
+    background: linear-gradient(135deg, #B57BFF 0%, #6B2FCC 100%);
+    color: #0a0820;
+    box-shadow: 0 0 18px rgba(181, 123, 255, 0.45), inset 0 -2px 0 rgba(0,0,0,0.15);
+  }
+  button.primary:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 0 26px rgba(181, 123, 255, 0.7), inset 0 -2px 0 rgba(0,0,0,0.15);
+  }
+  button.secondary {
+    background: transparent;
+    color: var(--accent2);
+    border-color: var(--accent2);
+    box-shadow: 0 0 12px rgba(0, 224, 255, 0.3);
+  }
+  button.secondary:hover {
+    background: rgba(0, 224, 255, 0.12);
+    transform: translateY(-1px);
+    box-shadow: 0 0 18px rgba(0, 224, 255, 0.55);
+  }
+  button:disabled { opacity: 0.5; cursor: wait; transform: none; }
+
+  .win-overlay, .gen-overlay, .help-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(29,34,38,0.55);
+    display: none;
+    align-items: center;
+    justify-content: center;
+    z-index: 10;
+    backdrop-filter: blur(2px);
+  }
+  .win-overlay.show, .gen-overlay.show, .help-overlay.show { display: flex; animation: fadeIn 240ms ease; }
+  @keyframes fadeIn { from { opacity: 0;} to { opacity: 1;} }
+
+  .help-card {
+    background: rgba(0, 0, 0, 0.95);
+    border: 1px solid rgba(181, 123, 255, 0.45);
+    border-radius: 18px;
+    padding: 28px 32px;
+    box-shadow:
+      0 0 60px rgba(181, 123, 255, 0.35),
+      0 20px 80px rgba(0, 0, 0, 0.7);
+    animation: pop 380ms cubic-bezier(.2,1.3,.4,1);
+    width: min(540px, 92vw);
+    max-height: 86vh;
+    overflow-y: auto;
+    color: var(--text);
+    position: relative;
+  }
+  .help-card h2 {
+    margin: 0 0 6px;
+    background: linear-gradient(90deg, #B57BFF, #00e0ff, #ff43c4);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+    font-size: 24px;
+    font-weight: 800;
+  }
+  .help-card .lead {
+    margin: 0 0 18px;
+    color: var(--muted);
+    font-size: 14px;
+  }
+  .help-card h3 {
+    margin: 18px 0 8px;
+    color: var(--zip);
+    font-size: 15px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    text-shadow: 0 0 8px rgba(181, 123, 255, 0.35);
+  }
+  .help-card ol, .help-card ul {
+    margin: 0 0 8px;
+    padding-left: 22px;
+    line-height: 1.55;
+    font-size: 14.5px;
+    color: #e8e3f5;
+  }
+  .help-card li { margin: 6px 0; }
+  .help-card li b { color: #fff; }
+  .help-card .legend {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 10px 14px;
+    align-items: center;
+    margin: 6px 0 4px;
+    font-size: 14px;
+  }
+  .help-card .chip {
+    width: 30px; height: 30px;
+    border-radius: 50%;
+    display: grid;
+    place-items: center;
+    font-weight: 800;
+    font-size: 13px;
+    border: 2px solid;
+  }
+  .help-card .chip.start {
+    background: radial-gradient(circle at 30% 30%, #DCBFFF, #B57BFF 55%, #6B2FCC);
+    color: #0a0820;
+    border-color: #fff;
+    box-shadow: 0 0 12px var(--zip);
+  }
+  .help-card .chip.end {
+    background: radial-gradient(circle at 30% 30%, #ffb0e7, #ff43c4 55%, #c41e94);
+    color: #fff;
+    border-color: #fff;
+    box-shadow: 0 0 12px var(--accent);
+  }
+  .help-card .chip.mid {
+    background: linear-gradient(135deg, #1a1144, #2a1668);
+    border-color: var(--accent2);
+    color: var(--accent2);
+    box-shadow: 0 0 10px rgba(0, 224, 255, 0.5);
+  }
+  .help-card .chip.obstacle {
+    background:
+      radial-gradient(circle at 30% 30%, rgba(181, 123, 255, 0.5), transparent 60%),
+      #050508;
+    border-color: rgba(181, 123, 255, 0.4);
+  }
+  .help-card .tip {
+    background: rgba(181, 123, 255, 0.10);
+    border-left: 3px solid var(--zip);
+    padding: 10px 12px;
+    border-radius: 6px;
+    margin: 14px 0 4px;
+    font-size: 13.5px;
+    color: #e8e3f5;
+  }
+  .help-card .actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 10px;
+    margin-top: 20px;
+  }
+  .help-card .close-x {
+    position: absolute;
+    top: 12px; right: 14px;
+    width: 30px; height: 30px;
+    border-radius: 50%;
+    background: transparent;
+    color: var(--muted);
+    border: 1px solid rgba(181, 123, 255, 0.35);
+    cursor: pointer;
+    font-size: 16px;
+    line-height: 1;
+    padding: 0;
+    display: grid;
+    place-items: center;
+  }
+  .help-card .close-x:hover { color: #fff; border-color: var(--zip); }
+
+  .win-card, .gen-card {
+    background: rgba(0, 0, 0, 0.92);
+    border: 1px solid rgba(181, 123, 255, 0.4);
+    border-radius: 18px;
+    padding: 34px 42px;
+    text-align: center;
+    box-shadow:
+      0 0 60px rgba(181, 123, 255, 0.3),
+      0 20px 80px rgba(0, 0, 0, 0.6);
+    animation: pop 380ms cubic-bezier(.2,1.3,.4,1);
+    min-width: 280px;
+    color: var(--text);
+  }
+  @keyframes pop {
+    0% { transform: scale(0.85); opacity: 0; }
+    100% { transform: scale(1); opacity: 1; }
+  }
+  .win-card h2, .gen-card h2 {
+    margin: 0 0 10px;
+    background: linear-gradient(90deg, #B57BFF, #00e0ff, #ff43c4);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+    font-size: 24px;
+    font-weight: 800;
+  }
+  .win-card p, .gen-card p { margin: 0 0 14px; color: var(--muted); font-size: 14px; }
+  .check {
+    width: 64px; height: 64px; border-radius: 50%;
+    background: radial-gradient(circle at 30% 30%, #DCBFFF, #B57BFF 60%, #6B2FCC);
+    color: #0a0820;
+    display: grid; place-items: center;
+    margin: 0 auto 16px;
+    font-size: 34px;
+    font-weight: 900;
+    box-shadow: 0 0 32px var(--zip);
+    animation: pulse 1.5s ease-in-out infinite;
+  }
+  .spinner {
+    width: 48px; height: 48px;
+    border: 4px solid rgba(181, 123, 255, 0.15);
+    border-top-color: var(--zip);
+    border-right-color: var(--accent2);
+    border-radius: 50%;
+    margin: 0 auto 16px;
+    animation: spin 0.8s linear infinite;
+    box-shadow: 0 0 18px rgba(181, 123, 255, 0.4);
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  .gen-stage {
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    font-size: 12px;
+    color: var(--muted);
+    background: rgba(0, 0, 0, 0.35);
+    border: 1px solid rgba(140, 110, 255, 0.2);
+    border-radius: 8px;
+    padding: 10px 12px;
+    margin-top: 8px;
+    text-align: left;
+    max-height: 120px;
+    overflow-y: auto;
+  }
+  .gen-stage div { padding: 1px 0; }
+  .gen-stage .ok { color: var(--zip); }
+  .gen-stage .fail { color: var(--error); }
+
+  .confetti {
+    position: absolute;
+    width: 8px; height: 14px;
+    top: -20px;
+    animation: confetti-fall linear forwards;
+  }
+  @keyframes confetti-fall {
+    to { transform: translateY(110vh) rotate(720deg); opacity: 0.4; }
+  }
+</style>
+</head>
+<body>
+  <div class="stars layer1"></div>
+  <div class="stars layer2"></div>
+  <div class="stars layer3"></div>
+  <div class="shooting-star"></div>
+  <div class="shooting-star s2"></div>
+  <div class="shooting-star s3"></div>
+
+  <header class="top">
+    <div class="brand">
+      <div class="logo">zip</div>
+      <span>Cosmic Path</span>
+    </div>
+    <div class="stats">
+      <span class="difficulty" id="difficulty">—</span>
+      <div class="stat"><span class="label">Time</span><span class="value" id="timer">0:00</span></div>
+      <div class="stat"><span class="label">Filled</span><span class="value" id="filled">0%</span></div>
+      <button class="help-btn" id="helpBtn" aria-label="How to play" title="How to play">?</button>
+    </div>
+  </header>
+
+  <main class="board-wrap">
+    <div class="board" id="board"></div>
+  </main>
+
+  <footer class="bottom">
+    <button class="primary" id="newGame">New Game</button>
+    <button class="secondary" id="reset">Reset</button>
+  </footer>
+
+  <div class="help-overlay" id="helpOverlay">
+    <div class="help-card" role="dialog" aria-labelledby="helpTitle">
+      <button class="close-x" id="helpClose" aria-label="Close">✕</button>
+      <h2 id="helpTitle">How to Play</h2>
+      <p class="lead">Connect every star in order, fill every empty cell — that's it!</p>
+
+      <h3>The Goal</h3>
+      <ol>
+        <li>Start at <b>1</b>, finish at the highest number on the board.</li>
+        <li>Pass through the numbered stars <b>in order</b> (1 → 2 → 3 …).</li>
+        <li>Your path must <b>cover every empty cell exactly once</b>. No skipped squares, no revisits.</li>
+      </ol>
+
+      <h3>How to Move</h3>
+      <ul>
+        <li><b>Click &amp; hold</b> on the <b>1</b> star, then <b>drag</b> to draw your path.</li>
+        <li>Move <b>up, down, left, or right</b> only — no diagonals.</li>
+        <li>Release when you reach the final number.</li>
+        <li><b>Made a mistake?</b> Click any cell on your path to rewind to that point, or hit <b>Reset</b>.</li>
+      </ul>
+
+      <h3>What the Cells Mean</h3>
+      <div class="legend">
+        <div class="chip start">1</div>
+        <div><b>Start</b> — purple star, where every path begins.</div>
+        <div class="chip end">N</div>
+        <div><b>Finish</b> — pink star, the highest number.</div>
+        <div class="chip mid">7</div>
+        <div><b>Waypoint</b> — must be visited at exactly that step number.</div>
+        <div class="chip obstacle"></div>
+        <div><b>Asteroid</b> — blocked. Your path can't enter these cells.</div>
+      </div>
+
+      <h3>Tips</h3>
+      <ul>
+        <li>The pulsing star shows your <b>next target</b>.</li>
+        <li>Every puzzle has <b>exactly one solution</b> — if you're stuck, try a different route from a recent turn.</li>
+        <li>Watch <b>Filled %</b> in the top bar to see your progress.</li>
+      </ul>
+
+      <div class="tip">You win when every cell is filled <i>and</i> every numbered star sits on the correct step. Good luck, explorer! ✦</div>
+
+      <div class="actions">
+        <button class="primary" id="helpGotIt">Got it</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="win-overlay" id="winOverlay">
+    <div class="win-card">
+      <div class="check">★</div>
+      <h2>Stellar!</h2>
+      <p id="winMsg">All stars connected.</p>
+      <button class="primary" id="winNew">New Puzzle</button>
+    </div>
+  </div>
+
+  <div class="gen-overlay" id="genOverlay">
+    <div class="gen-card">
+      <div class="spinner"></div>
+      <h2>Charting the cosmos…</h2>
+      <p>Plotting a unique trajectory</p>
+      <div class="gen-stage" id="genStage"></div>
+    </div>
+  </div>
+
+<script>
+'use strict';
+
+/* =====================================================================
+   NUMBER PATH (verified unique)
+   ----------------------------------------------------------------------
+   Each puzzle is built fresh by:
+     1. Random grid 8–10 with random obstacles (10–25%).
+     2. Connectivity check on playable cells.
+     3. Hamiltonian path search (Warnsdorff-ordered DFS) covering ALL
+        playable cells.
+     4. Iterative waypoint placement: start with endpoints {1, N}, run a
+        bounded DFS solver that searches for up to two distinct
+        Hamiltonian paths satisfying current waypoints. If two are
+        found, locate the first divergence between the generated path
+        and the alternative, pin that step as a new waypoint, repeat.
+     5. Finishes only when the solver returns exactly one solution.
+   So every shipped puzzle is provably unique and full-cover.
+====================================================================== */
+
+const boardEl = document.getElementById('board');
+const timerEl = document.getElementById('timer');
+const filledEl = document.getElementById('filled');
+const diffEl = document.getElementById('difficulty');
+const winOverlay = document.getElementById('winOverlay');
+const winMsg = document.getElementById('winMsg');
+const genOverlay = document.getElementById('genOverlay');
+const genStage = document.getElementById('genStage');
+const newGameBtn = document.getElementById('newGame');
+const resetBtn = document.getElementById('reset');
+
+let state = null;
+
+const rand = (n) => Math.floor(Math.random() * n);
+const shuffle = (a) => { for (let i = a.length-1; i > 0; i--) { const j = rand(i+1); [a[i],a[j]] = [a[j],a[i]]; } return a; };
+const key = (r,c) => r * 1000 + c;
+const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+
+function logStage(msg, cls) {
+  const div = document.createElement('div');
+  if (cls) div.className = cls;
+  div.textContent = msg;
+  genStage.appendChild(div);
+  genStage.scrollTop = genStage.scrollHeight;
+}
+function clearStage() { genStage.innerHTML = ''; }
+
+/* =================================================================
+   GENERATION
+================================================================= */
+
+function pickObstacles(R, C, num) {
+  const obs = new Uint8Array(R*C);
+  const cells = [];
+  for (let i = 0; i < R*C; i++) cells.push(i);
+  shuffle(cells);
+  for (let i = 0; i < num; i++) obs[cells[i]] = 1;
+  return obs;
+}
+
+function isConnected(R, C, obs) {
+  let startIdx = -1;
+  for (let i = 0; i < R*C; i++) if (!obs[i]) { startIdx = i; break; }
+  if (startIdx === -1) return false;
+  const seen = new Uint8Array(R*C);
+  const queue = [startIdx];
+  seen[startIdx] = 1;
+  let count = 1;
+  let totalPlayable = 0;
+  for (let i = 0; i < R*C; i++) if (!obs[i]) totalPlayable++;
+  while (queue.length) {
+    const idx = queue.shift();
+    const r = Math.floor(idx / C), c = idx % C;
+    const dirs = [[1,0],[-1,0],[0,1],[0,-1]];
+    for (const [dr,dc] of dirs) {
+      const nr=r+dr, nc=c+dc;
+      if (nr<0||nc<0||nr>=R||nc>=C) continue;
+      const ni = nr*C+nc;
+      if (obs[ni] || seen[ni]) continue;
+      seen[ni] = 1;
+      count++;
+      queue.push(ni);
+    }
+  }
+  return count === totalPlayable;
+}
+
+function findHamiltonian(R, C, obs, timeBudgetMs) {
+  const total = R*C;
+  let target = 0;
+  for (let i = 0; i < total; i++) if (!obs[i]) target++;
+  const visited = new Uint8Array(total);
+  const path = [];
+  const startMs = Date.now();
+  const candidates = [];
+  for (let i = 0; i < total; i++) if (!obs[i]) candidates.push(i);
+  shuffle(candidates);
+
+  function dfs(r, c) {
+    if (Date.now() - startMs > timeBudgetMs) return false;
+    visited[r*C+c] = 1;
+    path.push([r,c]);
+    if (path.length === target) return true;
+
+    const dirs = [[1,0],[-1,0],[0,1],[0,-1]];
+    const nbrs = [];
+    for (const [dr,dc] of dirs) {
+      const nr=r+dr, nc=c+dc;
+      if (nr<0||nc<0||nr>=R||nc>=C) continue;
+      const ni = nr*C+nc;
+      if (visited[ni] || obs[ni]) continue;
+      let cnt = 0;
+      for (const [dr2,dc2] of dirs) {
+        const nnr=nr+dr2, nnc=nc+dc2;
+        if (nnr<0||nnc<0||nnr>=R||nnc>=C) continue;
+        const nni = nnr*C+nnc;
+        if (visited[nni] || obs[nni]) continue;
+        cnt++;
+      }
+      nbrs.push([nr, nc, cnt]);
+    }
+    nbrs.sort((a,b) => a[2]-b[2]);
+    for (let i = 0; i < nbrs.length-1; i++) {
+      if (nbrs[i][2] === nbrs[i+1][2] && Math.random() < 0.5) {
+        [nbrs[i], nbrs[i+1]] = [nbrs[i+1], nbrs[i]];
+      }
+    }
+    for (const [nr,nc] of nbrs) {
+      if (dfs(nr,nc)) return true;
+    }
+    visited[r*C+c] = 0;
+    path.pop();
+    return false;
+  }
+
+  for (const idx of candidates) {
+    if (Date.now() - startMs > timeBudgetMs) return null;
+    visited.fill(0);
+    path.length = 0;
+    const r = Math.floor(idx / C), c = idx % C;
+    if (dfs(r, c)) return path.slice();
+  }
+  return null;
+}
+
+/**
+ * Find up to two distinct Hamiltonian paths satisfying:
+ *  - start at startCell, end at endCell (free if endCell null)
+ *  - visit all non-obstacle cells exactly once
+ *  - obey waypoint constraints: at step wp.step, must be at wp.pos
+ */
+function findUpToTwoSolutions(R, C, obs, startCell, endCell, waypoints, timeBudgetMs) {
+  const total = R*C;
+  let target = 0;
+  for (let i = 0; i < total; i++) if (!obs[i]) target++;
+
+  // step (1-indexed) -> required cell idx
+  const stepToCell = new Map();
+  // cell idx -> required step
+  const cellToStep = new Map();
+  for (const wp of waypoints) {
+    const ci = wp.pos[0]*C + wp.pos[1];
+    stepToCell.set(wp.step, ci);
+    cellToStep.set(ci, wp.step);
+  }
+
+  const visited = new Uint8Array(total);
+  const path = new Int32Array(target);
+  let pathLen = 0;
+  const solutions = [];
+  const startMs = Date.now();
+  let aborted = false;
+
+  function recur(r, c) {
+    if (solutions.length >= 2 || aborted) return;
+    if ((pathLen & 31) === 0 && Date.now() - startMs > timeBudgetMs) { aborted = true; return; }
+
+    const step = pathLen + 1;
+    const ci = r*C + c;
+    const required = stepToCell.get(step);
+    if (required !== undefined && required !== ci) return;
+    const cellStep = cellToStep.get(ci);
+    if (cellStep !== undefined && cellStep !== step) return;
+
+    visited[ci] = 1;
+    path[pathLen++] = ci;
+
+    if (pathLen === target) {
+      if (endCell === null || (r === endCell[0] && c === endCell[1])) {
+        const snap = Array.from(path.slice(0, pathLen));
+        solutions.push(snap);
+      }
+    } else {
+      const dirs = [[1,0],[-1,0],[0,1],[0,-1]];
+      // Light heuristic: prefer waypoint-direction or fewer-options first
+      const nbrs = [];
+      for (const [dr,dc] of dirs) {
+        const nr=r+dr, nc=c+dc;
+        if (nr<0||nc<0||nr>=R||nc>=C) continue;
+        const ni = nr*C+nc;
+        if (visited[ni] || obs[ni]) continue;
+        let cnt = 0;
+        for (const [dr2,dc2] of dirs) {
+          const nnr=nr+dr2, nnc=nc+dc2;
+          if (nnr<0||nnc<0||nnr>=R||nnc>=C) continue;
+          const nni = nnr*C+nnc;
+          if (visited[nni] || obs[nni]) continue;
+          cnt++;
+        }
+        nbrs.push([nr, nc, cnt]);
+      }
+      nbrs.sort((a,b) => a[2]-b[2]);
+      for (const [nr,nc] of nbrs) {
+        recur(nr, nc);
+        if (solutions.length >= 2 || aborted) break;
+      }
+    }
+
+    visited[ci] = 0;
+    pathLen--;
+  }
+
+  recur(startCell[0], startCell[1]);
+  return { solutions, aborted };
+}
+
+function makeUnique(R, C, obs, path, timeBudgetMs, log) {
+  const startMs = Date.now();
+  const total = path.length;
+  const startCell = path[0];
+  const endCell = path[total-1];
+  const wpSteps = new Set([1, total]);
+  const MAX_WAYPOINTS = 15;
+
+  while (true) {
+    if (Date.now() - startMs > timeBudgetMs) {
+      log(`timeout after ${wpSteps.size} waypoints`, 'fail');
+      return null;
+    }
+    if (wpSteps.size > MAX_WAYPOINTS) {
+      log(`exceeded max ${MAX_WAYPOINTS} waypoints`, 'fail');
+      return null;
+    }
+    const wpArr = [...wpSteps].sort((a,b)=>a-b).map(s => ({ step: s, pos: path[s-1] }));
+    const remaining = timeBudgetMs - (Date.now() - startMs);
+    const result = findUpToTwoSolutions(R, C, obs, startCell, endCell, wpArr, Math.min(remaining, 2500));
+    if (result.aborted) {
+      log(`solver timeout @ ${wpSteps.size} waypoints`, 'fail');
+      return null;
+    }
+    if (result.solutions.length === 0) {
+      log(`solver found 0 solutions (bug)`, 'fail');
+      return null;
+    }
+    if (result.solutions.length === 1) {
+      log(`unique with ${wpSteps.size} waypoints`, 'ok');
+      return wpArr;
+    }
+
+    // Two found - one of them should be `path` (or path-equivalent)
+    const [s1, s2] = result.solutions;
+    let alt = null;
+    const pathIdx = path.map(([r,c]) => r*C + c);
+    function differs(s) {
+      for (let i = 0; i < s.length; i++) if (s[i] !== pathIdx[i]) return true;
+      return false;
+    }
+    if (differs(s1)) alt = s1;
+    else if (differs(s2)) alt = s2;
+    if (!alt) {
+      log(`solutions identical (bug)`, 'fail');
+      return null;
+    }
+    let divK = -1;
+    for (let i = 0; i < alt.length; i++) {
+      if (alt[i] !== pathIdx[i]) { divK = i; break; }
+    }
+    if (divK < 0) { log(`no divergence (bug)`, 'fail'); return null; }
+    const newStep = divK + 1;
+    if (wpSteps.has(newStep)) { log(`already pinned step ${newStep}`, 'fail'); return null; }
+    wpSteps.add(newStep);
+    log(`split @ step ${newStep}, ${wpSteps.size} waypoints`);
+  }
+}
+
+const MIN_OBSTACLES = 3;
+
+/* --- Foundation: build a Hamiltonian-guaranteed playable region. ---
+ *
+ * Strategy: generate a random Hamiltonian path on the FULL grid, then
+ * mark the LAST k cells of the path as obstacles. The first (total-k)
+ * cells of the path remain as the playable region — they are
+ * automatically connected (they form a path) AND have a known
+ * Hamiltonian solution (the path itself). So Stage 1 (connectivity)
+ * and Stage 2 (Hamiltonian) succeed by construction on the first try.
+ */
+function buildFoundation(R, C) {
+  const total = R*C;
+  const obsFree = new Uint8Array(total); // empty grid for full Ham search
+  const fullPath = findHamiltonian(R, C, obsFree, 1500);
+  if (!fullPath) return null;
+
+  // Choose obstacle count: at least MIN_OBSTACLES, at most ~25% of grid
+  const minObs = Math.max(MIN_OBSTACLES, 3);
+  const maxObs = Math.max(minObs + 3, Math.floor(total * 0.25));
+  const obsCount = minObs + rand(maxObs - minObs + 1);
+
+  const obs = new Uint8Array(total);
+  const playLen = total - obsCount;
+  // Mark trailing cells of the full Ham path as obstacles
+  for (let i = playLen; i < total; i++) {
+    const [r, c] = fullPath[i];
+    obs[r*C+c] = 1;
+  }
+  const ham = fullPath.slice(0, playLen);
+  return { obs, ham };
+}
+
+/* --- Mutators used during the iterative debug loop --- */
+
+// Trim a cell off one end of the current Ham path → that cell becomes an
+// obstacle. Guarantees the remaining path is still Hamiltonian on the
+// new playable region (because we just dropped an endpoint).
+function trimHamEnd(R, C, obs, ham, fromStart) {
+  if (ham.length <= 4) return null; // keep some path
+  const cellsBefore = obs.reduce((s, v) => s + v, 0);
+  const newObs = obs.slice();
+  const removed = fromStart ? ham[0] : ham[ham.length - 1];
+  newObs[removed[0]*C + removed[1]] = 1;
+  const newHam = fromStart ? ham.slice(1) : ham.slice(0, -1);
+  return { obs: newObs, ham: newHam, addedAt: cellsBefore };
+}
+
+// Add an obstacle by trimming a random endpoint and re-search.
+// Falls back to trying the other end. Always increases obstacles by 1.
+function tightenViaTrim(R, C, obs, ham) {
+  // Randomize which end to trim
+  const order = Math.random() < 0.5 ? [true, false] : [false, true];
+  for (const fromStart of order) {
+    const result = trimHamEnd(R, C, obs, ham, fromStart);
+    if (result) return result;
+  }
+  return null;
+}
+
+async function generatePuzzle() {
+  const overallStart = Date.now();
+  const overallBudget = 15000;
+
+  // ---- Initial foundation (guaranteed connected + Hamiltonian) ----
+  const size = 8 + rand(3); // 8..10
+  const R = size, C = size;
+
+  let foundation = null;
+  for (let i = 0; i < 5 && !foundation; i++) {
+    foundation = buildFoundation(R, C);
+  }
+  if (!foundation) {
+    logStage(`could not seed foundation`, 'fail');
+    return null;
+  }
+  let obs = foundation.obs;
+  let ham = foundation.ham;
+  let nObs = 0;
+  for (let i = 0; i < R*C; i++) if (obs[i]) nObs++;
+  logStage(`foundation: ${R}×${C}, ${nObs} obstacles, path ${ham.length}`, 'ok');
+
+  // ---- Iterative refinement on the SAME foundation ----
+  let iter = 0;
+  const MAX_ITER = 40;
+
+  while (iter++ < MAX_ITER && Date.now() - overallStart < overallBudget) {
+    await sleep(0);
+
+    // Foundation invariants are preserved by construction & mutators,
+    // so we can skip directly to uniqueness verification each iter.
+    const wpArr = makeUnique(R, C, obs, ham, 3500, (m, c) => logStage(`  ${m}`, c));
+    if (wpArr) {
+      // Compute difficulty
+      let turns = 0;
+      for (let k = 1; k < ham.length - 1; k++) {
+        const [pr,pc] = ham[k-1], [r,c] = ham[k], [nr,nc] = ham[k+1];
+        if ((r-pr) !== (nr-r) || (c-pc) !== (nc-c)) turns++;
+      }
+      const turnRatio = turns / ham.length;
+      let countObs = 0;
+      for (let i = 0; i < R*C; i++) if (obs[i]) countObs++;
+      let difficulty = 'Medium';
+      if (size >= 9 || turnRatio > 0.40) difficulty = 'Hard';
+      if ((size >= 10 && turnRatio > 0.40) || wpArr.length >= 12 || (countObs/(R*C)) > 0.22) difficulty = 'Expert';
+      logStage(`solved in ${iter} iter, ${countObs} obstacles`, 'ok');
+      return { R, C, obstacles: obs, solution: ham, waypoints: wpArr, difficulty };
+    }
+
+    // Ambiguous → tighten by trimming one end of the Ham path
+    logStage(`#${iter} ambiguous → trimming endpoint`);
+    const tightened = tightenViaTrim(R, C, obs, ham);
+    if (!tightened) {
+      logStage(`path too short to trim further`, 'fail');
+      break;
+    }
+    obs = tightened.obs;
+    ham = tightened.ham;
+  }
+
+  logStage(`exhausted ${iter} iterations`, 'fail');
+  return null;
+}
+
+/* =================================================================
+   GAME STATE & RENDERING
+================================================================= */
+
+async function newGame() {
+  newGameBtn.disabled = true;
+  resetBtn.disabled = true;
+  hideWin();
+  clearStage();
+  genOverlay.classList.add('show');
+
+  // Yield so UI updates
+  await sleep(20);
+
+  let puzzle = null;
+  for (let i = 0; i < 3 && !puzzle; i++) {
+    puzzle = await generatePuzzle();
+  }
+
+  genOverlay.classList.remove('show');
+  newGameBtn.disabled = false;
+  resetBtn.disabled = false;
+
+  if (!puzzle) {
+    alert('Generation failed. Please try again.');
+    return;
+  }
+
+  const playable = puzzle.solution.length;
+  state = {
+    R: puzzle.R,
+    C: puzzle.C,
+    obstacles: puzzle.obstacles, // Uint8Array
+    waypoints: puzzle.waypoints,
+    solution: puzzle.solution,
+    playable,
+    numberAt: new Map(), // "r,c" -> step number
+    visited: Array.from({length: puzzle.R}, () => new Int32Array(puzzle.C)),
+    path: [],
+    drawing: false,
+    won: false,
+    startTime: Date.now(),
+    timerInterval: null,
+    difficulty: puzzle.difficulty,
+  };
+  for (const wp of puzzle.waypoints) {
+    state.numberAt.set(`${wp.pos[0]},${wp.pos[1]}`, wp.step);
+  }
+
+  diffEl.textContent = `${puzzle.difficulty} · ${puzzle.R}×${puzzle.C}`;
+  diffEl.className = 'difficulty ' + (puzzle.difficulty === 'Hard' ? 'hard' : puzzle.difficulty === 'Expert' ? 'expert' : '');
+
+  buildBoard();
+  resetTimer();
+  updateStats();
+  updateNextTargetHighlight();
+}
+
+function buildBoard() {
+  boardEl.innerHTML = '';
+  const { R, C } = state;
+  const wrap = document.querySelector('.board-wrap');
+  const availW = wrap.clientWidth - 32;
+  const availH = wrap.clientHeight - 32;
+  const cellSize = Math.floor(Math.min(availW / C, availH / R) - 2);
+  const size = Math.max(28, cellSize);
+
+  boardEl.style.gridTemplateColumns = `repeat(${C}, ${size}px)`;
+  boardEl.style.gridTemplateRows = `repeat(${R}, ${size}px)`;
+  boardEl.style.fontSize = Math.max(11, Math.floor(size * 0.42)) + 'px';
+
+  const maxStep = state.playable;
+  for (let r = 0; r < R; r++) {
+    for (let c = 0; c < C; c++) {
+      const cell = document.createElement('div');
+      cell.className = 'cell';
+      cell.dataset.r = r;
+      cell.dataset.c = c;
+      if (state.obstacles[r*C+c]) {
+        cell.classList.add('obstacle');
+      } else {
+        const step = state.numberAt.get(`${r},${c}`);
+        if (step !== undefined) {
+          const tag = document.createElement('div');
+          tag.className = 'number';
+          if (step === 1) tag.classList.add('start');
+          if (step === maxStep) tag.classList.add('end');
+          tag.textContent = step;
+          cell.appendChild(tag);
+        }
+      }
+      boardEl.appendChild(cell);
+    }
+  }
+}
+
+function getCellAtPoint(x, y) {
+  const el = document.elementFromPoint(x, y);
+  if (!el) return null;
+  const cell = el.closest('.cell');
+  if (!cell || !boardEl.contains(cell)) return null;
+  const r = parseInt(cell.dataset.r,10), c = parseInt(cell.dataset.c,10);
+  return [r, c];
+}
+
+function cellEl(r, c) { return boardEl.children[r * state.C + c]; }
+function isObstacle(r, c) { return state.obstacles[r*state.C+c] === 1; }
+
+/* ---------- Drawing logic ---------- */
+function startDraw(r, c) {
+  if (isObstacle(r, c)) return;
+  const step = state.numberAt.get(`${r},${c}`);
+  if (step === 1) {
+    clearAll();
+    state.drawing = true;
+    addToPath(r, c);
+    return;
+  }
+  if (state.visited[r][c] > 0) {
+    truncateTo(r, c);
+    state.drawing = true;
+  }
+}
+
+function continueDraw(r, c) {
+  if (!state.drawing) return;
+  if (isObstacle(r, c)) return;
+  const path = state.path;
+  if (path.length === 0) return;
+  const [lr, lc] = path[path.length - 1];
+  if (lr === r && lc === c) return;
+
+  const dr = Math.abs(lr - r), dc = Math.abs(lc - c);
+  if (dr + dc !== 1) return;
+
+  if (state.visited[r][c] > 0) {
+    // Crossing own line during a drag is ignored — line stays intact.
+    // To rewind, click directly on the cell to start from.
+    return;
+  }
+
+  addToPath(r, c);
+
+  if (path.length === state.playable) {
+    state.drawing = false;
+    checkWin();
+  }
+}
+
+function waypointAtStep(step) {
+  const wp = state.waypoints.find(w => w.step === step);
+  return wp ? wp.pos : null;
+}
+
+function endDraw() {
+  state.drawing = false;
+  checkWin();
+}
+
+function addToPath(r, c) {
+  state.path.push([r, c]);
+  state.visited[r][c] = state.path.length;
+  redrawCellAndNeighbors(r, c);
+  updateStats();
+  updateNextTargetHighlight();
+}
+
+function truncateTo(r, c) {
+  const stepIdx = state.visited[r][c];
+  const removed = state.path.slice(stepIdx);
+  state.path = state.path.slice(0, stepIdx);
+  removed.forEach(([rr,cc]) => { state.visited[rr][cc] = 0; });
+  for (const [rr,cc] of removed) redrawCellAndNeighbors(rr, cc);
+  redrawCellAndNeighbors(r, c);
+  clearWrongMarkers();
+  updateStats();
+  updateNextTargetHighlight();
+}
+
+function clearAll() {
+  for (const [r,c] of state.path) state.visited[r][c] = 0;
+  state.path = [];
+  for (let r = 0; r < state.R; r++)
+    for (let c = 0; c < state.C; c++) renderCell(r, c);
+  updateStats();
+  updateNextTargetHighlight();
+}
+
+/* ---------- Rendering ---------- */
+function redrawCellAndNeighbors(r, c) {
+  renderCell(r, c);
+  for (const [dr,dc] of [[1,0],[-1,0],[0,1],[0,-1]]) {
+    const nr = r+dr, nc = c+dc;
+    if (nr>=0 && nc>=0 && nr<state.R && nc<state.C) renderCell(nr, nc);
+  }
+}
+
+function renderCell(r, c) {
+  const el = cellEl(r, c);
+  el.querySelectorAll('.seg').forEach(s => s.remove());
+  if (isObstacle(r, c)) return;
+  const step = state.visited[r][c];
+  if (step === 0) {
+    el.classList.remove('filled');
+    const numEl = el.querySelector('.number');
+    if (numEl) numEl.classList.remove('reached');
+    return;
+  }
+  el.classList.add('filled');
+  const numEl = el.querySelector('.number');
+  if (numEl) numEl.classList.add('reached');
+
+  const center = document.createElement('div');
+  center.className = 'seg center';
+  el.appendChild(center);
+
+  const path = state.path;
+  const neighbors = [];
+  if (step > 1) neighbors.push(path[step - 2]);
+  if (step < path.length) neighbors.push(path[step]);
+
+  for (const [nr, nc] of neighbors) {
+    const dr = nr - r, dc = nc - c;
+    const seg = document.createElement('div');
+    seg.className = 'seg';
+    if (dr === -1) { seg.style.left = '30%'; seg.style.right = '30%'; seg.style.top = '0'; seg.style.bottom = '50%'; }
+    else if (dr === 1) { seg.style.left = '30%'; seg.style.right = '30%'; seg.style.top = '50%'; seg.style.bottom = '0'; }
+    else if (dc === -1) { seg.style.top = '30%'; seg.style.bottom = '30%'; seg.style.left = '0'; seg.style.right = '50%'; }
+    else if (dc === 1) { seg.style.top = '30%'; seg.style.bottom = '30%'; seg.style.left = '50%'; seg.style.right = '0'; }
+    el.appendChild(seg);
+  }
+}
+
+function updateNextTargetHighlight() {
+  boardEl.querySelectorAll('.number.next-target').forEach(el => el.classList.remove('next-target'));
+  const nextStep = state.path.length + 1;
+  const target = state.waypoints.find(w => w.step >= nextStep && state.visited[w.pos[0]][w.pos[1]] === 0);
+  if (!target) return;
+  const el = cellEl(target.pos[0], target.pos[1]).querySelector('.number');
+  if (el) el.classList.add('next-target');
+}
+
+/* ---------- Stats / Win ---------- */
+function updateStats() {
+  const pct = Math.round(100 * state.path.length / state.playable);
+  filledEl.textContent = pct + '%';
+}
+
+function clearWrongMarkers() {
+  boardEl.querySelectorAll('.number.wrong').forEach(el => el.classList.remove('wrong'));
+}
+
+function checkWin() {
+  if (state.path.length !== state.playable) {
+    clearWrongMarkers();
+    return false;
+  }
+  // Every numbered cell must have been visited at exactly its declared step
+  let allMatch = true;
+  for (const wp of state.waypoints) {
+    const step = state.visited[wp.pos[0]][wp.pos[1]];
+    const numEl = cellEl(wp.pos[0], wp.pos[1]).querySelector('.number');
+    if (step !== wp.step) {
+      allMatch = false;
+      if (numEl) numEl.classList.add('wrong');
+    } else if (numEl) {
+      numEl.classList.remove('wrong');
+    }
+  }
+  if (!allMatch) return false;
+  win();
+  return true;
+}
+
+function win() {
+  if (state.won) return;
+  state.won = true;
+  clearInterval(state.timerInterval);
+  const elapsed = Math.floor((Date.now() - state.startTime) / 1000);
+  const m = Math.floor(elapsed / 60), s = elapsed % 60;
+  winMsg.textContent = `${state.difficulty} ${state.R}×${state.C} solved in ${m}:${s.toString().padStart(2,'0')}`;
+  winOverlay.classList.add('show');
+  launchConfetti();
+}
+
+function hideWin() { winOverlay.classList.remove('show'); }
+
+function launchConfetti() {
+  const colors = ['#B57BFF','#8B4FE8','#DCBFFF','#ff43c4','#00e0ff','#ffd24a','#6B2FCC'];
+  for (let i = 0; i < 60; i++) {
+    const el = document.createElement('div');
+    el.className = 'confetti';
+    el.style.left = Math.random() * 100 + 'vw';
+    el.style.background = colors[rand(colors.length)];
+    el.style.animationDuration = (2 + Math.random() * 2) + 's';
+    el.style.animationDelay = (Math.random() * 0.4) + 's';
+    el.style.transform = `rotate(${rand(360)}deg)`;
+    document.body.appendChild(el);
+    setTimeout(() => el.remove(), 4500);
+  }
+}
+
+/* ---------- Timer ---------- */
+function resetTimer() {
+  if (state.timerInterval) clearInterval(state.timerInterval);
+  state.startTime = Date.now();
+  timerEl.textContent = '0:00';
+  state.timerInterval = setInterval(() => {
+    if (state.won) return;
+    const elapsed = Math.floor((Date.now() - state.startTime) / 1000);
+    const m = Math.floor(elapsed / 60), s = elapsed % 60;
+    timerEl.textContent = `${m}:${s.toString().padStart(2,'0')}`;
+  }, 1000);
+}
+
+/* ---------- Reset = new puzzle (per spec) ---------- */
+async function resetGame() {
+  await newGame();
+}
+
+/* ---------- Pointer events ---------- */
+let lastPointerCell = null;
+
+function onPointerDown(e) {
+  if (!state || state.won) return;
+  e.preventDefault();
+  const pt = pointFromEvent(e);
+  const cell = getCellAtPoint(pt.x, pt.y);
+  if (!cell) return;
+  startDraw(cell[0], cell[1]);
+  lastPointerCell = cell;
+}
+
+function onPointerMove(e) {
+  if (!state || !state.drawing) return;
+  e.preventDefault();
+  const pt = pointFromEvent(e);
+  const cell = getCellAtPoint(pt.x, pt.y);
+  if (!cell) return;
+  if (lastPointerCell && lastPointerCell[0] === cell[0] && lastPointerCell[1] === cell[1]) return;
+  if (lastPointerCell) {
+    const dr = cell[0] - lastPointerCell[0];
+    const dc = cell[1] - lastPointerCell[1];
+    if (Math.abs(dr) + Math.abs(dc) > 1) {
+      let cur = lastPointerCell.slice();
+      while (cur[0] !== cell[0]) {
+        cur[0] += Math.sign(cell[0] - cur[0]);
+        continueDraw(cur[0], cur[1]);
+      }
+      while (cur[1] !== cell[1]) {
+        cur[1] += Math.sign(cell[1] - cur[1]);
+        continueDraw(cur[0], cur[1]);
+      }
+      lastPointerCell = cell;
+      return;
+    }
+  }
+  continueDraw(cell[0], cell[1]);
+  lastPointerCell = cell;
+}
+
+function onPointerUp() {
+  if (!state || !state.drawing) return;
+  endDraw();
+  lastPointerCell = null;
+}
+
+function pointFromEvent(e) {
+  if (e.touches && e.touches.length) return { x: e.touches[0].clientX, y: e.touches[0].clientY };
+  if (e.changedTouches && e.changedTouches.length) return { x: e.changedTouches[0].clientX, y: e.changedTouches[0].clientY };
+  return { x: e.clientX, y: e.clientY };
+}
+
+boardEl.addEventListener('mousedown', onPointerDown);
+window.addEventListener('mousemove', onPointerMove);
+window.addEventListener('mouseup', onPointerUp);
+boardEl.addEventListener('touchstart', onPointerDown, { passive: false });
+boardEl.addEventListener('touchmove', onPointerMove, { passive: false });
+boardEl.addEventListener('touchend', onPointerUp);
+boardEl.addEventListener('touchcancel', onPointerUp);
+
+newGameBtn.addEventListener('click', newGame);
+document.getElementById('winNew').addEventListener('click', newGame);
+
+const helpOverlay = document.getElementById('helpOverlay');
+const helpBtn = document.getElementById('helpBtn');
+const helpClose = document.getElementById('helpClose');
+const helpGotIt = document.getElementById('helpGotIt');
+const showHelp = () => helpOverlay.classList.add('show');
+const hideHelp = () => helpOverlay.classList.remove('show');
+helpBtn.addEventListener('click', showHelp);
+helpClose.addEventListener('click', hideHelp);
+helpGotIt.addEventListener('click', hideHelp);
+helpOverlay.addEventListener('click', (e) => { if (e.target === helpOverlay) hideHelp(); });
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape') hideHelp(); });
+resetBtn.addEventListener('click', resetGame);
+
+let resizeT;
+window.addEventListener('resize', () => {
+  clearTimeout(resizeT);
+  resizeT = setTimeout(() => {
+    if (!state) return;
+    const savedPath = state.path.slice();
+    const savedVisited = state.visited.map(row => Array.from(row));
+    buildBoard();
+    state.visited = savedVisited.map(row => Int32Array.from(row));
+    state.path = savedPath;
+    for (let r = 0; r < state.R; r++)
+      for (let c = 0; c < state.C; c++) renderCell(r, c);
+    updateNextTargetHighlight();
+  }, 120);
+});
+
+/* ---------- Boot ---------- */
+newGame();
+</script>
+</body>
+</html>
