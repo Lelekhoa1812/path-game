@@ -643,6 +643,7 @@
     <div class="stats">
       <span class="difficulty" id="difficulty">—</span>
       <div class="stat"><span class="label">Time</span><span class="value" id="timer">0:00</span></div>
+      <div class="stat"><span class="label">Step</span><span class="value" id="step">0 / 0</span></div>
       <div class="stat"><span class="label">Filled</span><span class="value" id="filled">0%</span></div>
       <button class="help-btn" id="helpBtn" aria-label="How to play" title="How to play">?</button>
     </div>
@@ -746,6 +747,7 @@
 const boardEl = document.getElementById('board');
 const timerEl = document.getElementById('timer');
 const filledEl = document.getElementById('filled');
+const stepEl = document.getElementById('step');
 const diffEl = document.getElementById('difficulty');
 const winOverlay = document.getElementById('winOverlay');
 const winMsg = document.getElementById('winMsg');
@@ -2133,6 +2135,7 @@ function updateNextTargetHighlight() {
 function updateStats() {
   const pct = Math.round(100 * state.path.length / state.playable);
   filledEl.textContent = pct + '%';
+  stepEl.textContent = `${state.path.length} / ${state.playable}`;
 }
 
 function clearWrongMarkers() {
