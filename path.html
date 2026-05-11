@@ -810,22 +810,130 @@ function isConnected(R, C, obs) {
   return count === totalPlayable;
 }
 
-function findHamiltonian(R, C, obs, timeBudgetMs) {
+/* Bipartite-parity precheck: a grid graph is bipartite (color = (r+c)&1).
+ * A Hamiltonian path exists only if |#black - #white| <= 1. */
+function bipartiteParityOk(R, C, obs) {
+  let b = 0, w = 0;
+  for (let r = 0; r < R; r++) {
+    for (let c = 0; c < C; c++) {
+      if (obs[r*C+c]) continue;
+      if ((r+c) & 1) b++; else w++;
+    }
+  }
+  return Math.abs(b - w) <= 1;
+}
+
+/* Degree-1 endpoint count: at most two unvisited cells may have degree 1
+ * (path endpoints). More than two means no Ham path through the remainder. */
+function tooManyDeadEnds(R, C, obs, visited, exemptIdx) {
+  let deadEnds = 0;
+  for (let r = 0; r < R; r++) {
+    for (let c = 0; c < C; c++) {
+      const ci = r*C+c;
+      if (obs[ci] || visited[ci]) continue;
+      let cnt = 0;
+      for (const [dr,dc] of [[1,0],[-1,0],[0,1],[0,-1]]) {
+        const nr=r+dr, nc=c+dc;
+        if (nr<0||nc<0||nr>=R||nc>=C) continue;
+        const ni = nr*C+nc;
+        if (visited[ni] || obs[ni]) continue;
+        cnt++;
+      }
+      if (cnt <= 1 && ci !== exemptIdx) deadEnds++;
+      if (deadEnds > 2) return true;
+    }
+  }
+  return false;
+}
+
+/* Connectivity feasibility: after visiting (r,c), every remaining unvisited
+ * cell must be reachable through unvisited cells from (r,c)'s neighbors. */
+function remainingConnected(R, C, obs, visited, r, c, remaining) {
+  if (remaining === 0) return true;
   const total = R*C;
+  let startN = -1;
+  for (const [dr,dc] of [[1,0],[-1,0],[0,1],[0,-1]]) {
+    const nr=r+dr, nc=c+dc;
+    if (nr<0||nc<0||nr>=R||nc>=C) continue;
+    const ni = nr*C+nc;
+    if (!visited[ni] && !obs[ni]) { startN = ni; break; }
+  }
+  if (startN === -1) return false;
+  const seen = new Uint8Array(total);
+  seen[startN] = 1;
+  const stack = [startN];
+  let count = 1;
+  while (stack.length) {
+    const idx = stack.pop();
+    const cr = Math.floor(idx/C), cc = idx%C;
+    for (const [dr,dc] of [[1,0],[-1,0],[0,1],[0,-1]]) {
+      const nr=cr+dr, nc=cc+dc;
+      if (nr<0||nc<0||nr>=R||nc>=C) continue;
+      const ni = nr*C+nc;
+      if (visited[ni] || obs[ni] || seen[ni]) continue;
+      seen[ni] = 1;
+      count++;
+      stack.push(ni);
+    }
+  }
+  return count === remaining;
+}
+
+function findHamiltonian(R, C, obs, timeBudgetMs, opts) {
+  const total = R*C;
+  if (!bipartiteParityOk(R, C, obs)) return null;
+
   let target = 0;
   for (let i = 0; i < total; i++) if (!obs[i]) target++;
+
   const visited = new Uint8Array(total);
   const path = [];
   const startMs = Date.now();
+  const preferTurns = !!(opts && opts.preferTurns);
   const candidates = [];
   for (let i = 0; i < total; i++) if (!obs[i]) candidates.push(i);
-  shuffle(candidates);
+  // Warnsdorff endpoints: corners and degree-2 cells are good starting cells.
+  candidates.sort((a, b) => {
+    const da = degOf(a), db = degOf(b);
+    return da - db;
+  });
+  // Light shuffle within same-degree buckets for variety.
+  for (let i = 0; i < candidates.length - 1; i++) {
+    if (degOf(candidates[i]) === degOf(candidates[i+1]) && Math.random() < 0.5) {
+      [candidates[i], candidates[i+1]] = [candidates[i+1], candidates[i]];
+    }
+  }
 
-  function dfs(r, c) {
-    if (Date.now() - startMs > timeBudgetMs) return false;
-    visited[r*C+c] = 1;
+  function degOf(idx) {
+    const r = Math.floor(idx/C), c = idx%C;
+    let d = 0;
+    for (const [dr,dc] of [[1,0],[-1,0],[0,1],[0,-1]]) {
+      const nr=r+dr, nc=c+dc;
+      if (nr<0||nc<0||nr>=R||nc>=C) continue;
+      if (!obs[nr*C+nc]) d++;
+    }
+    return d;
+  }
+
+  function dfs(r, c, prevDir) {
+    if ((path.length & 15) === 0 && Date.now() - startMs > timeBudgetMs) return false;
+    const ci = r*C+c;
+    visited[ci] = 1;
     path.push([r,c]);
     if (path.length === target) return true;
+
+    const remaining = target - path.length;
+    // Pruning: no orphan regions, ≤2 unvisited cells with degree ≤1.
+    // Cost-bound: run the full feasibility scan only periodically and
+    // always when nearing the end (where impossibility is more likely
+    // and the remaining region is small enough that scans are cheap).
+    const shouldPrune = remaining < 30 || (path.length % 4 === 0);
+    if (shouldPrune && (!remainingConnected(R, C, obs, visited, r, c, remaining) ||
+        tooManyDeadEnds(R, C, obs, visited, -1))) {
+      visited[ci] = 0;
+      path.pop();
+      return false;
+    }
 
     const dirs = [[1,0],[-1,0],[0,1],[0,-1]];
     const nbrs = [];
@@ -842,18 +950,17 @@ function findHamiltonian(R, C, obs, timeBudgetMs) {
         if (visited[nni] || obs[nni]) continue;
         cnt++;
       }
-      nbrs.push([nr, nc, cnt]);
+      // Difficulty bias: when preferTurns, slightly favor neighbors that
+      // would create a turn (different direction from the previous step).
+      const isTurn = prevDir && (prevDir[0] !== dr || prevDir[1] !== dc);
+      const turnBonus = preferTurns && isTurn ? -0.5 : 0;
+      nbrs.push([nr, nc, cnt + turnBonus, dr, dc]);
     }
     nbrs.sort((a,b) => a[2]-b[2]);
-    for (let i = 0; i < nbrs.length-1; i++) {
-      if (nbrs[i][2] === nbrs[i+1][2] && Math.random() < 0.5) {
-        [nbrs[i], nbrs[i+1]] = [nbrs[i+1], nbrs[i]];
-      }
+    for (const [nr,nc,_,dr,dc] of nbrs) {
+      if (dfs(nr, nc, [dr,dc])) return true;
     }
-    for (const [nr,nc] of nbrs) {
-      if (dfs(nr,nc)) return true;
-    }
-    visited[r*C+c] = 0;
+    visited[ci] = 0;
     path.pop();
     return false;
   }
@@ -863,7 +970,7 @@ function findHamiltonian(R, C, obs, timeBudgetMs) {
     visited.fill(0);
     path.length = 0;
     const r = Math.floor(idx / C), c = idx % C;
-    if (dfs(r, c)) return path.slice();
+    if (dfs(r, c, null)) return path.slice();
   }
   return null;
 }
@@ -996,19 +1103,481 @@ function makeUnique(R, C, obs, path, timeBudgetMs, log) {
       log(`solutions identical (bug)`, 'fail');
       return null;
     }
-    let divK = -1;
+    // Collect ALL diverging steps — pinning any one eliminates `alt`.
+    // Score each by:
+    //   (a) Chebyshev >= 2 from every existing waypoint cell (HARD: no
+    //       numbered tiles touching each other, ortho or diagonal).
+    //   (b) DECEPTIVENESS — the step gap to the nearest existing
+    //       waypoint (in step-number) vs the Manhattan grid-distance
+    //       to that waypoint. Large gap / small grid-distance = long
+    //       detour = visually misleading.
+    //   (c) Even step-distribution — prefer steps that bisect the
+    //       largest current step-gap, so hints aren't bunched.
+    const MIN_WP_CHEBYSHEV = 2;
+    const wpStepsSorted = [...wpSteps].sort((a,b) => a-b);
+    const wpCells = wpStepsSorted.map(s => path[s-1]);
+    const candidates = [];
     for (let i = 0; i < alt.length; i++) {
-      if (alt[i] !== pathIdx[i]) { divK = i; break; }
+      if (alt[i] === pathIdx[i]) continue;
+      const step = i + 1;
+      if (wpSteps.has(step)) continue;
+      const [r, c] = path[i];
+      // Min Chebyshev distance to any existing waypoint cell.
+      let minCheb = Infinity;
+      for (const [wr, wc] of wpCells) {
+        const d = Math.max(Math.abs(r-wr), Math.abs(c-wc));
+        if (d < minCheb) minCheb = d;
+      }
+      // Deceptiveness: detour from prev waypoint in step-order.
+      let prevStep = wpStepsSorted[0], nextStep = wpStepsSorted[wpStepsSorted.length-1];
+      for (const s of wpStepsSorted) {
+        if (s < step && s > prevStep) prevStep = s;
+        if (s > step && s < nextStep) nextStep = s;
+      }
+      const [pr, pc] = path[prevStep-1], [nr, nc] = path[nextStep-1];
+      const prevManh = Math.abs(r-pr) + Math.abs(c-pc);
+      const nextManh = Math.abs(r-nr) + Math.abs(c-nc);
+      const prevDetour = (step - prevStep) - prevManh;
+      const nextDetour = (nextStep - step) - nextManh;
+      const trickiness = prevDetour + nextDetour;
+      const gapSize = nextStep - prevStep;
+      const bisection = Math.min(step - prevStep, nextStep - step);
+      let buffer = 0;
+      for (let dr = -1; dr <= 1; dr++) for (let dc = -1; dc <= 1; dc++) {
+        if (!dr && !dc) continue;
+        const nr2 = r+dr, nc2 = c+dc;
+        if (nr2 < 0 || nc2 < 0 || nr2 >= R || nc2 >= C) continue;
+        if (!obs[nr2*C+nc2]) buffer++;
+      }
+      // Min step-gap to any existing waypoint: keep hints spaced out so
+      // each leg requires real planning, not just "next number is right there".
+      let minStepGap = Infinity;
+      for (const s of wpStepsSorted) {
+        const d = Math.abs(step - s);
+        if (d < minStepGap) minStepGap = d;
+      }
+      candidates.push({ step, minCheb, trickiness, gapSize, bisection, buffer, minStepGap });
     }
-    if (divK < 0) { log(`no divergence (bug)`, 'fail'); return null; }
-    const newStep = divK + 1;
-    if (wpSteps.has(newStep)) { log(`already pinned step ${newStep}`, 'fail'); return null; }
+    if (candidates.length === 0) { log(`no divergence (bug)`, 'fail'); return null; }
+    candidates.sort((a, b) => {
+      const aOk = a.minCheb >= MIN_WP_CHEBYSHEV ? 0 : 1;
+      const bOk = b.minCheb >= MIN_WP_CHEBYSHEV ? 0 : 1;
+      if (aOk !== bOk) return aOk - bOk;
+      // Composite: trickiness × bisection × spacing × buffer × step-gap.
+      const sa = a.trickiness * 1.5 + a.bisection * 0.6 + a.minCheb * 0.3 + a.buffer * 0.4 + a.minStepGap * 0.8;
+      const sb = b.trickiness * 1.5 + b.bisection * 0.6 + b.minCheb * 0.3 + b.buffer * 0.4 + b.minStepGap * 0.8;
+      return sb - sa;
+    });
+    const newStep = candidates[0].step;
     wpSteps.add(newStep);
     log(`split @ step ${newStep}, ${wpSteps.size} waypoints`);
   }
 }
 
 const MIN_OBSTACLES = 3;
+
+/* Bridson's Poisson-disk sampling adapted to a grid.
+ *
+ * Maintains an *active list* of recently-placed seeds. Each iteration:
+ * pick a random active seed, generate up to K candidates in the annulus
+ * [minDist, 2·minDist] around it; accept the first candidate that is
+ * (a) inside the grid, (b) not orthogonally adjacent to any obstacle
+ * (Manhattan ≥ 2), and (c) at least minDist Chebyshev from every
+ * obstacle. If no candidate works after K tries, retire that seed.
+ *
+ * This yields true blue-noise distribution — well-spread by construction,
+ * no clustering possible. Parity is ignored here; we rebalance later. */
+function bridsonPoissonDisk(R, C, targetCount, minDist) {
+  const total = R*C;
+  const obs = new Uint8Array(total);
+  const placed = [];
+  const active = [];
+  const K = 28;
+
+  const seed = rand(total);
+  const sr = Math.floor(seed/C), sc = seed%C;
+  obs[seed] = 1;
+  placed.push([sr, sc]);
+  active.push([sr, sc]);
+
+  while (active.length > 0 && placed.length < targetCount) {
+    const ai = rand(active.length);
+    const [r, c] = active[ai];
+    let found = false;
+    for (let k = 0; k < K; k++) {
+      const angle = Math.random() * Math.PI * 2;
+      const dist = minDist + Math.random() * minDist;
+      const nr = Math.round(r + Math.cos(angle) * dist);
+      const nc = Math.round(c + Math.sin(angle) * dist);
+      if (nr < 0 || nc < 0 || nr >= R || nc >= C) continue;
+      if (obs[nr*C+nc]) continue;
+      // Manhattan ≥ 2: no edge-touching obstacles.
+      let badAdj = false;
+      for (const [dr,dc] of [[1,0],[-1,0],[0,1],[0,-1]]) {
+        const xr = nr+dr, xc = nc+dc;
+        if (xr<0||xc<0||xr>=R||xc>=C) continue;
+        if (obs[xr*C+xc]) { badAdj = true; break; }
+      }
+      if (badAdj) continue;
+      // Chebyshev ≥ minDist to every placed.
+      let tooClose = false;
+      for (const [pr, pc] of placed) {
+        if (Math.max(Math.abs(nr-pr), Math.abs(nc-pc)) < minDist) {
+          tooClose = true; break;
+        }
+      }
+      if (tooClose) continue;
+      obs[nr*C+nc] = 1;
+      placed.push([nr, nc]);
+      active.push([nr, nc]);
+      found = true;
+      break;
+    }
+    if (!found) {
+      active[ai] = active[active.length-1];
+      active.pop();
+    }
+  }
+  return obs;
+}
+
+/* Parity rebalance preserving spread.
+ *
+ * A Hamiltonian path requires |#black - #white| ≤ 1 on a bipartite grid.
+ * If the placed obstacles caused an imbalance, swap one obstacle of the
+ * under-represented playable color with a playable cell of the over-
+ * represented color — choosing the most-clustered obstacle to remove and
+ * the most-isolated playable cell to fill. This *improves* spread while
+ * fixing parity. */
+function rebalanceParity(R, C, obs) {
+  for (let pass = 0; pass < 30; pass++) {
+    let b = 0, w = 0;
+    for (let r = 0; r < R; r++) for (let c = 0; c < C; c++) {
+      if (obs[r*C+c]) continue;
+      if ((r+c)&1) b++; else w++;
+    }
+    if (Math.abs(b - w) <= 1) break;
+    const underColor = b < w ? 1 : 0;
+    const overColor = 1 - underColor;
+    // Most-clustered obstacle of underColor (best to remove).
+    let bestObs = -1, bestObsCluster = -1;
+    for (let i = 0; i < R*C; i++) {
+      if (!obs[i]) continue;
+      const r = Math.floor(i/C), c = i%C;
+      if (((r+c)&1) !== underColor) continue;
+      let n = 0;
+      for (const [dr,dc] of [[1,0],[-1,0],[0,1],[0,-1]]) {
+        const nr=r+dr, nc=c+dc;
+        if (nr<0||nc<0||nr>=R||nc>=C) continue;
+        if (obs[nr*C+nc]) n++;
+      }
+      if (n > bestObsCluster) { bestObsCluster = n; bestObs = i; }
+    }
+    // Most-isolated playable cell of overColor (best to fill).
+    let bestPlay = -1, bestPlayCluster = 5;
+    for (let i = 0; i < R*C; i++) {
+      if (obs[i]) continue;
+      const r = Math.floor(i/C), c = i%C;
+      if (((r+c)&1) !== overColor) continue;
+      let n = 0;
+      for (const [dr,dc] of [[1,0],[-1,0],[0,1],[0,-1]]) {
+        const nr=r+dr, nc=c+dc;
+        if (nr<0||nc<0||nr>=R||nc>=C) continue;
+        if (obs[nr*C+nc]) n++;
+      }
+      if (n < bestPlayCluster) { bestPlayCluster = n; bestPlay = i; }
+    }
+    if (bestObs < 0 || bestPlay < 0 || bestPlayCluster > 1) break;
+    obs[bestObs] = 0;
+    obs[bestPlay] = 1;
+  }
+  return obs;
+}
+
+/* Pre-Ham layout validator. Necessary conditions for a Hamiltonian path:
+ *   - bipartite parity balanced
+ *   - playable cells connected
+ *   - no degree-0 isolated cell
+ *   - at most 2 degree-1 cells (the path's two endpoints)
+ *
+ * Fast (O(R·C)). Rejecting bad layouts here saves the expensive Ham
+ * search from wasting its budget on impossible inputs. */
+function layoutHasHamPotential(R, C, obs) {
+  if (!bipartiteParityOk(R, C, obs)) return false;
+  if (!isConnected(R, C, obs)) return false;
+  let deg0 = 0, deg1 = 0;
+  for (let r = 0; r < R; r++) for (let c = 0; c < C; c++) {
+    if (obs[r*C+c]) continue;
+    let d = 0;
+    for (const [dr,dc] of [[1,0],[-1,0],[0,1],[0,-1]]) {
+      const nr=r+dr, nc=c+dc;
+      if (nr<0||nc<0||nr>=R||nc>=C) continue;
+      if (!obs[nr*C+nc]) d++;
+    }
+    if (d === 0) { deg0++; if (deg0 > 0) return false; }
+    else if (d === 1) { deg1++; if (deg1 > 2) return false; }
+  }
+  return true;
+}
+
+/* Bridson-based foundation: the *primary* generator. Designs the
+ * obstacle layout to be good-by-construction, then runs the Hamiltonian
+ * search. With pre-validation, the Ham search is called only on layouts
+ * that have a real chance — most failures get rejected in microseconds
+ * by `layoutHasHamPotential`, not after a 700 ms timeout. */
+function buildFoundationBridson(R, C, target, log) {
+  for (let attempt = 0; attempt < 14; attempt++) {
+    // Try minDist=2 (no diagonal touch). If Bridson can't reach target,
+    // relax to topping up with the simpler scatter.
+    let obs = bridsonPoissonDisk(R, C, target, 2);
+    let count = 0;
+    for (let i = 0; i < R*C; i++) if (obs[i]) count++;
+    obs = rebalanceParity(R, C, obs);
+    if (!layoutHasHamPotential(R, C, obs)) continue;
+    const ham = findHamiltonian(R, C, obs, 1200, { preferTurns: true });
+    if (ham) {
+      if (log) log(`bridson ok @ try ${attempt+1} (${count} obs)`, 'ok');
+      return { obs, ham };
+    }
+  }
+  return null;
+}
+
+/* Poisson-disk-style scattered placement with parity awareness.
+ *
+ * HARD constraint: no two obstacles share an edge (Manhattan ≥ 2).
+ * SOFT preference: max-min Chebyshev distance (Poisson-disk look).
+ * SOFT constraint: keep bipartite |black-white| ≤ 1.
+ *
+ * If the hard constraint can't be satisfied (high density), fall back
+ * for that single placement only — never accept >1 adjacency per cell. */
+function pickScatteredObstacles(R, C, num) {
+  const total = R*C;
+  const obs = new Uint8Array(total);
+  const placed = [];
+  let b = 0, w = 0;
+  for (let r = 0; r < R; r++) for (let c = 0; c < C; c++) {
+    if ((r+c)&1) b++; else w++;
+  }
+  function isOrthAdj(r, c) {
+    for (const [dr,dc] of [[1,0],[-1,0],[0,1],[0,-1]]) {
+      const nr=r+dr, nc=c+dc;
+      if (nr<0||nc<0||nr>=R||nc>=C) continue;
+      if (obs[nr*C+nc]) return true;
+    }
+    return false;
+  }
+  const firstIdx = rand(total);
+  obs[firstIdx] = 1;
+  placed.push([Math.floor(firstIdx/C), firstIdx%C]);
+  if ((Math.floor(firstIdx/C)+firstIdx%C)&1) b--; else w--;
+
+  for (let k = 1; k < num; k++) {
+    // Two-pass: first enforce hard non-adjacency; if all candidates fail,
+    // relax for this single placement.
+    let bestIdx = -1, bestScore = -Infinity;
+    const tries = Math.min(80, total);
+    for (let pass = 0; pass < 2; pass++) {
+      const allowAdj = pass === 1;
+      for (let t = 0; t < tries; t++) {
+        const idx = rand(total);
+        if (obs[idx]) continue;
+        const r = Math.floor(idx/C), c = idx%C;
+        if (!allowAdj && isOrthAdj(r, c)) continue;
+        const isBlack = (r+c)&1;
+        const nb = isBlack ? b-1 : b;
+        const nw = isBlack ? w : w-1;
+        if (Math.abs(nb - nw) > 1) continue;
+        let minDist = Infinity;
+        for (const [pr, pc] of placed) {
+          const d = Math.max(Math.abs(r-pr), Math.abs(c-pc));
+          if (d < minDist) minDist = d;
+        }
+        const score = minDist + Math.random() * 0.4;
+        if (score > bestScore) { bestScore = score; bestIdx = idx; }
+      }
+      if (bestIdx !== -1) break;
+    }
+    if (bestIdx === -1) break;
+    obs[bestIdx] = 1;
+    const r = Math.floor(bestIdx/C), c = bestIdx%C;
+    placed.push([r, c]);
+    if ((r+c)&1) b--; else w--;
+  }
+  return obs;
+}
+
+/* If a layout fails connectivity or Hamiltonian search, try to repair it
+ * by relocating obstacles that look problematic (e.g., create deg-1 or
+ * deg-0 unvisited cells, or sit at articulation points of the playable
+ * region). Each repair attempt picks the most-clustered obstacle and
+ * tries to swap it with a random playable cell at lower obstacle density. */
+function repairObstacles(R, C, obs) {
+  const total = R*C;
+  const newObs = obs.slice();
+  // Score each obstacle by adjacent-obstacle count (8-dir).
+  const obsList = [];
+  for (let r = 0; r < R; r++) for (let c = 0; c < C; c++) {
+    if (!newObs[r*C+c]) continue;
+    let n = 0;
+    for (let dr = -1; dr <= 1; dr++) for (let dc = -1; dc <= 1; dc++) {
+      if (!dr && !dc) continue;
+      const nr=r+dr, nc=c+dc;
+      if (nr<0||nc<0||nr>=R||nc>=C) continue;
+      if (newObs[nr*C+nc]) n++;
+    }
+    obsList.push({ idx: r*C+c, r, c, n });
+  }
+  if (!obsList.length) return newObs;
+  obsList.sort((a,b) => b.n - a.n);
+  const victim = obsList[0];
+  if (victim.n === 0) return newObs;
+  // Find a playable cell with the lowest local obstacle density.
+  let bestSwap = -1, bestSwapScore = Infinity;
+  for (let t = 0; t < 60; t++) {
+    const idx = rand(total);
+    if (newObs[idx]) continue;
+    const r = Math.floor(idx/C), c = idx%C;
+    let n = 0;
+    for (let dr = -1; dr <= 1; dr++) for (let dc = -1; dc <= 1; dc++) {
+      if (!dr && !dc) continue;
+      const nr=r+dr, nc=c+dc;
+      if (nr<0||nc<0||nr>=R||nc>=C) continue;
+      if (newObs[nr*C+nc]) n++;
+    }
+    // Parity preserved (swap same-color cells when possible).
+    const sameColor = (((r+c)&1) === ((victim.r+victim.c)&1));
+    const score = n + (sameColor ? 0 : 2);
+    if (score < bestSwapScore) { bestSwapScore = score; bestSwap = idx; }
+  }
+  if (bestSwap < 0) return newObs;
+  newObs[victim.idx] = 0;
+  newObs[bestSwap] = 1;
+  return newObs;
+}
+
+/* Ham-preserving obstacle spreader. Iteratively picks the most-clustered
+ * obstacle (highest orthogonal-neighbor count) and swaps it with an empty
+ * "calm" cell (zero obstacle neighbors). After every swap it re-verifies
+ * connectivity, bipartite parity, and the existence of a Hamiltonian path,
+ * reverting on failure. This is the single biggest fix for the
+ * "all obstacles in left columns" failure mode produced by the trailing-
+ * tail foundation. */
+function spreadObstaclesPreserveHam(R, C, obs, ham, maxSwaps, log) {
+  let currentHam = ham;
+  let totalSwaps = 0;
+  for (let pass = 0; pass < maxSwaps; pass++) {
+    const obsList = [];
+    for (let r = 0; r < R; r++) for (let c = 0; c < C; c++) {
+      if (!obs[r*C+c]) continue;
+      let n = 0;
+      for (const [dr,dc] of [[1,0],[-1,0],[0,1],[0,-1]]) {
+        const nr=r+dr, nc=c+dc;
+        if (nr<0||nc<0||nr>=R||nc>=C) continue;
+        if (obs[nr*C+nc]) n++;
+      }
+      obsList.push({r, c, n});
+    }
+    obsList.sort((a,b) => b.n - a.n);
+    if (!obsList.length || obsList[0].n === 0) break;
+
+    let didSwap = false;
+    for (const victim of obsList) {
+      if (victim.n === 0) break;
+      const victimColor = (victim.r + victim.c) & 1;
+      // Build a candidate list of "calm" empty cells with same parity color.
+      const dests = [];
+      for (let r = 0; r < R; r++) for (let c = 0; c < C; c++) {
+        if (obs[r*C+c]) continue;
+        if (((r+c)&1) !== victimColor) continue;
+        let n = 0;
+        for (const [dr,dc] of [[1,0],[-1,0],[0,1],[0,-1]]) {
+          const nr=r+dr, nc=c+dc;
+          if (nr<0||nc<0||nr>=R||nc>=C) continue;
+          if (obs[nr*C+nc]) n++;
+        }
+        if (n === 0) {
+          // Prefer destinations geometrically far from the victim's cluster.
+          const d = Math.max(Math.abs(r-victim.r), Math.abs(c-victim.c));
+          dests.push({r, c, d});
+        }
+      }
+      if (!dests.length) continue;
+      dests.sort((a,b) => b.d - a.d);
+      const top = dests.slice(0, Math.min(5, dests.length));
+      const pick = top[rand(top.length)];
+
+      obs[victim.r*C + victim.c] = 0;
+      obs[pick.r*C + pick.c] = 1;
+      if (!isConnected(R, C, obs) || !bipartiteParityOk(R, C, obs)) {
+        obs[victim.r*C + victim.c] = 1;
+        obs[pick.r*C + pick.c] = 0;
+        continue;
+      }
+      const newHam = findHamiltonian(R, C, obs, 700, { preferTurns: true });
+      if (!newHam) {
+        obs[victim.r*C + victim.c] = 1;
+        obs[pick.r*C + pick.c] = 0;
+        continue;
+      }
+      currentHam = newHam;
+      totalSwaps++;
+      didSwap = true;
+      break;
+    }
+    if (!didSwap) break;
+  }
+  if (log && totalSwaps > 0) log(`spread: ${totalSwaps} swap${totalSwaps>1?'s':''}`, 'ok');
+  return { obs, ham: currentHam };
+}
+
+/* A* shortest path length on the playable grid between two cells.
+ * Returns Infinity if unreachable. Manhattan-heuristic, 4-connected. */
+function aStarDistance(R, C, obs, startR, startC, endR, endC) {
+  if (startR === endR && startC === endC) return 0;
+  const total = R*C;
+  const dist = new Int32Array(total).fill(-1);
+  const open = [[startR*C+startC, 0]];
+  dist[startR*C+startC] = 0;
+  // Simple BFS suffices (uniform-cost grid): A* with admissible heuristic
+  // collapses to BFS-equivalent ordering here, and BFS gives exact shortest.
+  while (open.length) {
+    const [idx, d] = open.shift();
+    const r = Math.floor(idx/C), c = idx%C;
+    for (const [dr,dc] of [[1,0],[-1,0],[0,1],[0,-1]]) {
+      const nr=r+dr, nc=c+dc;
+      if (nr<0||nc<0||nr>=R||nc>=C) continue;
+      const ni = nr*C+nc;
+      if (obs[ni] || dist[ni] !== -1) continue;
+      dist[ni] = d + 1;
+      if (nr === endR && nc === endC) return d + 1;
+      open.push([ni, d + 1]);
+    }
+  }
+  return Infinity;
+}
+
+function buildFoundationScattered(R, C, obsTarget, log) {
+  const total = R*C;
+  for (let attempt = 0; attempt < 8; attempt++) {
+    let obs = pickScatteredObstacles(R, C, obsTarget);
+    // Up to 3 local repair passes if connectivity or Ham search fails.
+    for (let repair = 0; repair < 4; repair++) {
+      if (!isConnected(R, C, obs)) {
+        obs = repairObstacles(R, C, obs);
+        continue;
+      }
+      if (!bipartiteParityOk(R, C, obs)) {
+        obs = repairObstacles(R, C, obs);
+        continue;
+      }
+      const ham = findHamiltonian(R, C, obs, 700, { preferTurns: true });
+      if (ham) { if (log) log(`scatter ok @ try ${attempt+1}.${repair+1}`, 'ok'); return { obs, ham }; }
+      obs = repairObstacles(R, C, obs);
+    }
+  }
+  return null;
+}
 
 /* --- Foundation: build a Hamiltonian-guaranteed playable region. ---
  *
@@ -1068,40 +1637,119 @@ function tightenViaTrim(R, C, obs, ham) {
   return null;
 }
 
-async function generatePuzzle() {
-  const overallStart = Date.now();
-  const overallBudget = 15000;
+/* Geometric obstacle clustering: average pairwise Chebyshev distance of
+ * obstacle cells. Higher = more spread. Used both for scoring and to
+ * detect column-clustered fallback layouts. */
+function obstacleSpreadMetric(R, C, obs) {
+  const pts = [];
+  for (let r = 0; r < R; r++) for (let c = 0; c < C; c++) {
+    if (obs[r*C+c]) pts.push([r, c]);
+  }
+  if (pts.length < 2) return 0;
+  let sum = 0, n = 0;
+  for (let i = 0; i < pts.length; i++) {
+    for (let j = i+1; j < pts.length; j++) {
+      sum += Math.max(Math.abs(pts[i][0]-pts[j][0]), Math.abs(pts[i][1]-pts[j][1]));
+      n++;
+    }
+  }
+  return sum / n;
+}
 
-  // ---- Initial foundation (guaranteed connected + Hamiltonian) ----
-  const size = 8 + rand(3); // 8..10
-  const R = size, C = size;
+/* Tortuosity per waypoint pair: ham-segment length / A* shortest path.
+ * A* runs on the playable grid (excluding obstacles), so this captures
+ * "how much longer than necessary" each leg is — exactly the metric the
+ * user requested. Returns the AVERAGE and MIN tortuosity. */
+function tortuosityStats(R, C, obs, waypoints) {
+  const wp = waypoints.slice().sort((a,b) => a.step - b.step);
+  let sum = 0, n = 0, minT = Infinity;
+  for (let i = 1; i < wp.length; i++) {
+    const [ar, ac] = wp[i-1].pos, [br, bc] = wp[i].pos;
+    const stepGap = wp[i].step - wp[i-1].step;
+    const a = aStarDistance(R, C, obs, ar, ac, br, bc);
+    if (!isFinite(a) || a === 0) continue;
+    const t = stepGap / a;
+    sum += t; n++;
+    if (t < minT) minT = t;
+  }
+  return { avg: n ? sum / n : 1, min: isFinite(minT) ? minT : 1 };
+}
+
+/* Score a complete candidate — higher is harder/better. */
+function scoreCandidate(p) {
+  const { R, C, obstacles, solution, waypoints } = p;
+  let turns = 0;
+  for (let k = 1; k < solution.length - 1; k++) {
+    const [pr,pc] = solution[k-1], [r,c] = solution[k], [nr,nc] = solution[k+1];
+    if ((r-pr) !== (nr-r) || (c-pc) !== (nc-c)) turns++;
+  }
+  const turnRatio = turns / solution.length;
+  let adjPairs = 0;
+  for (let r = 0; r < R; r++) {
+    for (let c = 0; c < C; c++) {
+      if (!obstacles[r*C+c]) continue;
+      for (const [dr,dc] of [[1,0],[0,1]]) {
+        const nr=r+dr, nc=c+dc;
+        if (nr>=R||nc>=C) continue;
+        if (obstacles[nr*C+nc]) adjPairs++;
+      }
+    }
+  }
+  const spread = obstacleSpreadMetric(R, C, obstacles);
+  const tort = tortuosityStats(R, C, obstacles, waypoints);
+  p.tortAvg = tort.avg;
+  p.tortMin = tort.min;
+  p.spread = spread;
+  const wpDensity = waypoints.length / solution.length;
+  return turnRatio * 50 + (-adjPairs * 5) + spread * 2 + tort.avg * 14 + tort.min * 10 + (-wpDensity * 45);
+}
+
+async function generateOneCandidate(R, C, timeBudgetMs, logPrefix) {
+  const start = Date.now();
+  const total = R*C;
+  const minObs = Math.max(MIN_OBSTACLES, 3);
+  const lo = Math.max(minObs, Math.floor(total * 0.20));
+  const hi = Math.max(lo + 3, Math.floor(total * 0.32));
+  const obsTarget = lo + rand(hi - lo + 1);
 
   let foundation = null;
+  // Strategy A (primary): Bridson Poisson-disk + parity rebalance + Ham-
+  // potential pre-validation. Designs a good layout, doesn't repair after.
   for (let i = 0; i < 5 && !foundation; i++) {
+    if (Date.now() - start > timeBudgetMs * 0.5) break;
+    foundation = buildFoundationBridson(R, C, obsTarget, (m, c) => logStage(`  ${logPrefix}${m}`, c));
+  }
+  // Strategy B (secondary): legacy scattered seeder with greedy repair.
+  for (let i = 0; i < 3 && !foundation; i++) {
+    if (Date.now() - start > timeBudgetMs * 0.75) break;
+    foundation = buildFoundationScattered(R, C, obsTarget, (m, c) => logStage(`  ${logPrefix}${m}`, c));
+  }
+  // Strategy C (last-resort): trailing-tail foundation — guaranteed Ham
+  // but clusters obstacles, so the post-pass spreader will fire on it.
+  for (let i = 0; i < 3 && !foundation; i++) {
     foundation = buildFoundation(R, C);
   }
-  if (!foundation) {
-    logStage(`could not seed foundation`, 'fail');
-    return null;
-  }
+  if (!foundation) return null;
   let obs = foundation.obs;
   let ham = foundation.ham;
   let nObs = 0;
-  for (let i = 0; i < R*C; i++) if (obs[i]) nObs++;
-  logStage(`foundation: ${R}×${C}, ${nObs} obstacles, path ${ham.length}`, 'ok');
+  for (let i = 0; i < total; i++) if (obs[i]) nObs++;
+  logStage(`${logPrefix}foundation: ${R}×${C}, ${nObs} obs, path ${ham.length}`, 'ok');
 
-  // ---- Iterative refinement on the SAME foundation ----
+  // Ham-preserving spread pass — crucial when the trailing-tail fallback
+  // produced a column-cluster. Up to 12 swaps; reverts any swap that breaks
+  // connectivity / parity / Hamiltonicity.
+  const spread = spreadObstaclesPreserveHam(R, C, obs, ham, 12, (m, c) => logStage(`  ${logPrefix}${m}`, c));
+  obs = spread.obs;
+  ham = spread.ham;
+
   let iter = 0;
   const MAX_ITER = 40;
-
-  while (iter++ < MAX_ITER && Date.now() - overallStart < overallBudget) {
+  while (iter++ < MAX_ITER && Date.now() - start < timeBudgetMs) {
     await sleep(0);
-
-    // Foundation invariants are preserved by construction & mutators,
-    // so we can skip directly to uniqueness verification each iter.
-    const wpArr = makeUnique(R, C, obs, ham, 3500, (m, c) => logStage(`  ${m}`, c));
+    const remaining = timeBudgetMs - (Date.now() - start);
+    const wpArr = makeUnique(R, C, obs, ham, Math.min(3000, remaining), (m, c) => logStage(`  ${logPrefix}${m}`, c));
     if (wpArr) {
-      // Compute difficulty
       let turns = 0;
       for (let k = 1; k < ham.length - 1; k++) {
         const [pr,pc] = ham[k-1], [r,c] = ham[k], [nr,nc] = ham[k+1];
@@ -1111,25 +1759,124 @@ async function generatePuzzle() {
       let countObs = 0;
       for (let i = 0; i < R*C; i++) if (obs[i]) countObs++;
       let difficulty = 'Medium';
-      if (size >= 9 || turnRatio > 0.40) difficulty = 'Hard';
-      if ((size >= 10 && turnRatio > 0.40) || wpArr.length >= 12 || (countObs/(R*C)) > 0.22) difficulty = 'Expert';
-      logStage(`solved in ${iter} iter, ${countObs} obstacles`, 'ok');
+      if (R >= 9 || turnRatio > 0.40) difficulty = 'Hard';
+      if ((R >= 10 && turnRatio > 0.40) || wpArr.length >= 12 || (countObs/(R*C)) > 0.22) difficulty = 'Expert';
       return { R, C, obstacles: obs, solution: ham, waypoints: wpArr, difficulty };
     }
-
-    // Ambiguous → tighten by trimming one end of the Ham path
-    logStage(`#${iter} ambiguous → trimming endpoint`);
     const tightened = tightenViaTrim(R, C, obs, ham);
-    if (!tightened) {
-      logStage(`path too short to trim further`, 'fail');
-      break;
-    }
+    if (!tightened) break;
     obs = tightened.obs;
     ham = tightened.ham;
   }
-
-  logStage(`exhausted ${iter} iterations`, 'fail');
   return null;
+}
+
+/* Tournament: generate several candidates and keep the highest-scoring
+ * one (more turns + better spread + fewer/trickier waypoints).
+ *
+ * `relaxLevel` (0 = strict, higher = looser) is bumped by `newGame` on
+ * each retry. Floors shrink linearly so the generator is guaranteed to
+ * accept *something* by relaxLevel 5. Grid size also shrinks under
+ * pressure (11×11 is hardest for the solver). */
+async function generatePuzzle(relaxLevel) {
+  relaxLevel = relaxLevel || 0;
+  const overallStart = Date.now();
+  const overallBudget = 22000;
+  const TARGET_CANDIDATES = 3;
+  // Size: under pressure, drop the 11×11 option and bias smaller.
+  const sizeRoll = Math.random();
+  let size;
+  if (relaxLevel === 0)      size = sizeRoll < 0.20 ? 9 : sizeRoll < 0.65 ? 10 : 11;
+  else if (relaxLevel === 1) size = sizeRoll < 0.30 ? 9 : sizeRoll < 0.85 ? 10 : 11;
+  else if (relaxLevel === 2) size = sizeRoll < 0.50 ? 9 : 10;
+  else                       size = sizeRoll < 0.50 ? 8 : 9;
+  const R = size, C = size;
+
+  // Difficulty-driven hard floors. A candidate must clear all thresholds
+  // to be accepted — otherwise we keep generating until we get a good one
+  // or run out of time, then fall back to the highest-scoring near-miss.
+  // Adaptive floors — each relaxLevel step loosens by ~15-25%.
+  const rl = relaxLevel;
+  const MIN_TORT_AVG  = Math.max(1.05, 1.60 - rl * 0.15);
+  const MIN_TORT_MIN  = Math.max(1.00, 1.30 - rl * 0.10);
+  const MIN_SPREAD    = Math.max(R * 0.18, R * (0.40 - rl * 0.06));
+  const MAX_ADJ_RATIO = Math.min(0.80, 0.20 + rl * 0.10);
+  const MAX_WP_DENSITY = Math.min(0.40, 0.18 + rl * 0.05);
+  logStage(`tournament: relax=${rl} floors tort≥${MIN_TORT_AVG.toFixed(2)}/${MIN_TORT_MIN.toFixed(2)} spread≥${MIN_SPREAD.toFixed(2)} adj≤${MAX_ADJ_RATIO.toFixed(2)} wp≤${MAX_WP_DENSITY.toFixed(2)}`);
+
+  const winners = [];
+  const nearMisses = [];
+  let attempt = 0;
+  while (winners.length < TARGET_CANDIDATES && Date.now() - overallStart < overallBudget) {
+    attempt++;
+    const remaining = overallBudget - (Date.now() - overallStart);
+    if (remaining < 3500 && (winners.length > 0 || nearMisses.length > 0)) break;
+    const perBudget = Math.min(remaining, 7000);
+    const cand = await generateOneCandidate(R, C, perBudget, `try${attempt}: `);
+    if (!cand) continue;
+    cand.score = scoreCandidate(cand);
+    let nObs = 0;
+    for (let i = 0; i < R*C; i++) if (cand.obstacles[i]) nObs++;
+    let adjPairs = 0;
+    for (let r = 0; r < R; r++) for (let c = 0; c < C; c++) {
+      if (!cand.obstacles[r*C+c]) continue;
+      for (const [dr,dc] of [[1,0],[0,1]]) {
+        const nr=r+dr, nc=c+dc;
+        if (nr>=R||nc>=C) continue;
+        if (cand.obstacles[nr*C+nc]) adjPairs++;
+      }
+    }
+    const adjRatio = nObs > 0 ? adjPairs / nObs : 0;
+    const wpDensity = cand.waypoints.length / cand.solution.length;
+    const ok = cand.tortAvg >= MIN_TORT_AVG
+            && cand.tortMin >= MIN_TORT_MIN
+            && cand.spread >= MIN_SPREAD
+            && adjRatio <= MAX_ADJ_RATIO
+            && wpDensity <= MAX_WP_DENSITY;
+    logStage(`  → score ${cand.score.toFixed(1)} tort=${cand.tortAvg.toFixed(2)}/${cand.tortMin.toFixed(2)} spread=${cand.spread.toFixed(2)} adj=${adjRatio.toFixed(2)} wp=${wpDensity.toFixed(2)} ${ok?'✓':'·'}`, ok?'ok':'');
+    if (ok) winners.push(cand);
+    else nearMisses.push(cand);
+  }
+  const pool = winners.length ? winners : nearMisses;
+  if (pool.length === 0) {
+    logStage(`tournament empty after ${attempt} tries`, 'fail');
+    return null;
+  }
+  pool.sort((a, b) => b.score - a.score);
+  const best = pool[0];
+  logStage(`winner: score ${best.score.toFixed(1)} (${winners.length?'qualified':'best-effort'})`, 'ok');
+  return best;
+}
+
+/* Guaranteed-success fallback. Used when the tournament cannot produce
+ * any candidate after 6 progressively-relaxed retries. Builds the most
+ * permissive possible puzzle:
+ *   - 8×8 grid (smallest the solver handles)
+ *   - no obstacles (full-grid Ham path always exists)
+ *   - generous makeUnique budget
+ *   - degrades to "endpoints-only" waypoints if even makeUnique times out
+ *
+ * The puzzle won't be hard, but it's always playable. */
+async function buildGuaranteedPuzzle() {
+  const R = 8, C = 8;
+  const total = R*C;
+  const obs = new Uint8Array(total);
+  let ham = null;
+  for (let i = 0; i < 5 && !ham; i++) {
+    ham = findHamiltonian(R, C, obs, 3000, { preferTurns: false });
+  }
+  if (!ham) return null;
+  let wpArr = makeUnique(R, C, obs, ham, 6000, () => {});
+  if (!wpArr) {
+    // Degrade further: only the two endpoints as waypoints. Not unique
+    // but at least playable end-to-end.
+    wpArr = [
+      { step: 1, pos: ham[0] },
+      { step: ham.length, pos: ham[ham.length - 1] },
+    ];
+  }
+  logStage(`guaranteed: 8×8, ${wpArr.length} waypoints`, 'ok');
+  return { R, C, obstacles: obs, solution: ham, waypoints: wpArr, difficulty: 'Easy' };
 }
 
 /* =================================================================
@@ -1147,8 +1894,16 @@ async function newGame() {
   await sleep(20);
 
   let puzzle = null;
-  for (let i = 0; i < 3 && !puzzle; i++) {
-    puzzle = await generatePuzzle();
+  // Layered retry: each attempt loosens the quality floors. By relax=5
+  // basically every layout qualifies, so we always have a winner.
+  for (let attempt = 0; attempt < 6 && !puzzle; attempt++) {
+    puzzle = await generatePuzzle(attempt);
+  }
+  // Guaranteed fallback: full-grid Hamiltonian, no obstacles, makeUnique
+  // with a long budget. This never returns null short of catastrophic bugs.
+  if (!puzzle) {
+    logStage(`⚠ tournament exhausted — building guaranteed puzzle`, 'fail');
+    puzzle = await buildGuaranteedPuzzle();
   }
 
   genOverlay.classList.remove('show');
