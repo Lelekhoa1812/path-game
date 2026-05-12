@@ -414,7 +414,57 @@
     transform: translateY(-1px);
     box-shadow: 0 0 18px rgba(0, 224, 255, 0.55);
   }
+  button.warn {
+    background: transparent;
+    color: var(--accent3);
+    border-color: var(--accent3);
+    box-shadow: 0 0 12px rgba(255, 210, 74, 0.3);
+  }
+  button.warn:hover {
+    background: rgba(255, 210, 74, 0.12);
+    transform: translateY(-1px);
+    box-shadow: 0 0 18px rgba(255, 210, 74, 0.55);
+  }
+  button.danger {
+    background: transparent;
+    color: var(--error);
+    border-color: var(--error);
+    box-shadow: 0 0 12px rgba(255, 59, 107, 0.3);
+  }
+  button.danger:hover {
+    background: rgba(255, 59, 107, 0.12);
+    transform: translateY(-1px);
+    box-shadow: 0 0 18px rgba(255, 59, 107, 0.55);
+  }
   button:disabled { opacity: 0.5; cursor: wait; transform: none; }
+
+  /* Forfeit / hint overlays — red segments drawn over the board. */
+  .seg.solution-overlay {
+    background: linear-gradient(90deg, #ff708f, var(--error)) !important;
+    box-shadow: 0 0 10px rgba(255, 59, 107, 0.8) !important;
+    z-index: 2;
+  }
+  .seg.center.solution-overlay {
+    background: radial-gradient(circle, #ff708f, var(--error) 60%) !important;
+  }
+  .number.solution-overlay {
+    box-shadow: 0 0 16px var(--error), 0 0 28px rgba(255, 59, 107, 0.7) !important;
+    border-color: var(--error) !important;
+  }
+  .hint-cell-overlay {
+    position: absolute;
+    inset: 8%;
+    border-radius: 50%;
+    background: radial-gradient(circle, rgba(255, 59, 107, 0.55), rgba(255, 59, 107, 0.15) 65%, transparent 80%);
+    pointer-events: none;
+    z-index: 4;
+    animation: pulse-hint 1.2s ease-in-out infinite;
+    border: 2px dashed var(--error);
+  }
+  @keyframes pulse-hint {
+    0%, 100% { transform: scale(1); opacity: 0.85; }
+    50% { transform: scale(1.08); opacity: 1; }
+  }
 
   .win-overlay, .gen-overlay, .help-overlay {
     position: fixed;
@@ -656,6 +706,8 @@
   <footer class="bottom">
     <button class="primary" id="newGame">New Game</button>
     <button class="secondary" id="reset">Reset</button>
+    <button class="warn" id="hint">Hint</button>
+    <button class="danger" id="forfeit">Forfeit</button>
   </footer>
 
   <div class="help-overlay" id="helpOverlay">
@@ -755,6 +807,8 @@ const genOverlay = document.getElementById('genOverlay');
 const genStage = document.getElementById('genStage');
 const newGameBtn = document.getElementById('newGame');
 const resetBtn = document.getElementById('reset');
+const hintBtn = document.getElementById('hint');
+const forfeitBtn = document.getElementById('forfeit');
 
 let state = null;
 
@@ -2205,9 +2259,92 @@ function resetTimer() {
   }, 1000);
 }
 
-/* ---------- Reset = new puzzle (per spec) ---------- */
-async function resetGame() {
-  await newGame();
+/* ---------- Reset = clear path only (does NOT regenerate the map) ---------- */
+function resetGame() {
+  if (!state) return;
+  clearSolutionOverlay();
+  clearHintOverlay();
+  clearAll();
+  state.won = false;
+}
+
+/* ---------- Forfeit: paint the precomputed solution path in red ---------- */
+function forfeitGame() {
+  if (!state || !state.solution) return;
+  clearHintOverlay();
+  clearAll();
+  // Walk the solution sequentially and draw red segments connecting cells.
+  const sol = state.solution;
+  for (let i = 0; i < sol.length; i++) {
+    const [r, c] = sol[i];
+    const el = cellEl(r, c);
+    if (!el) continue;
+    el.classList.add('filled');
+    const numEl = el.querySelector('.number');
+    if (numEl) numEl.classList.add('solution-overlay');
+    const center = document.createElement('div');
+    center.className = 'seg center solution-overlay';
+    el.appendChild(center);
+    // Stub connectors to prev/next cell
+    if (i > 0) addSolutionSeg(el, sol[i-1], [r, c]);
+    if (i < sol.length - 1) addSolutionSeg(el, sol[i+1], [r, c]);
+  }
+  state.solutionShown = true;
+  // Lock interaction — the player forfeited; Reset/New Game restores.
+  state.drawing = false;
+  state.won = true;
+}
+
+function addSolutionSeg(el, from, to) {
+  const dr = from[0] - to[0], dc = from[1] - to[1];
+  const seg = document.createElement('div');
+  seg.className = 'seg solution-overlay';
+  if (dr === -1) { seg.style.left = '30%'; seg.style.right = '30%'; seg.style.top = '0'; seg.style.bottom = '50%'; }
+  else if (dr === 1) { seg.style.left = '30%'; seg.style.right = '30%'; seg.style.top = '50%'; seg.style.bottom = '0'; }
+  else if (dc === -1) { seg.style.top = '30%'; seg.style.bottom = '30%'; seg.style.left = '0'; seg.style.right = '50%'; }
+  else if (dc === 1) { seg.style.top = '30%'; seg.style.bottom = '30%'; seg.style.left = '50%'; seg.style.right = '0'; }
+  el.appendChild(seg);
+}
+
+function clearSolutionOverlay() {
+  boardEl.querySelectorAll('.seg.solution-overlay').forEach(s => s.remove());
+  boardEl.querySelectorAll('.number.solution-overlay').forEach(n => n.classList.remove('solution-overlay'));
+  if (state) state.solutionShown = false;
+}
+
+/* ---------- Hint: highlight 3 solution cells starting from divergence ---------- */
+function showHint() {
+  if (!state || !state.solution) return;
+  clearHintOverlay();
+  const sol = state.solution;
+  const user = state.path;
+  // Find first divergence: the earliest 0-indexed step where user differs.
+  let div = 0;
+  while (div < user.length && div < sol.length
+         && user[div][0] === sol[div][0] && user[div][1] === sol[div][1]) {
+    div++;
+  }
+  // If user is on-track and hasn't started, hint the first 3 solution cells.
+  // Otherwise hint solution cells starting at the divergence point.
+  const startK = div;
+  const cells = [];
+  for (let k = startK; k < startK + 3 && k < sol.length; k++) cells.push(sol[k]);
+  if (!cells.length) return;
+  for (const [r, c] of cells) {
+    const el = cellEl(r, c);
+    if (!el) continue;
+    const ov = document.createElement('div');
+    ov.className = 'hint-cell-overlay';
+    el.appendChild(ov);
+  }
+  // Auto-clear after a few seconds so the hint feels like a peek, not a guide.
+  if (state.hintTimer) clearTimeout(state.hintTimer);
+  state.hintTimer = setTimeout(clearHintOverlay, 4500);
+}
+
+function clearHintOverlay() {
+  boardEl.querySelectorAll('.hint-cell-overlay').forEach(o => o.remove());
+  if (state && state.hintTimer) { clearTimeout(state.hintTimer); state.hintTimer = null; }
 }
 
 /* ---------- Pointer events ---------- */
@@ -2286,6 +2423,8 @@ helpGotIt.addEventListener('click', hideHelp);
 helpOverlay.addEventListener('click', (e) => { if (e.target === helpOverlay) hideHelp(); });
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape') hideHelp(); });
 resetBtn.addEventListener('click', resetGame);
+hintBtn.addEventListener('click', showHint);
+forfeitBtn.addEventListener('click', forfeitGame);
 
 let resizeT;
 window.addEventListener('resize', () => {
