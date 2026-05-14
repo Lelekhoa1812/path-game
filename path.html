@@ -776,8 +776,11 @@
     </div>
   </div>
 
-<script>
-'use strict';
+<script type="module">
+import { runMapLoaderBench } from './src/map-loader/bench.js'
+import { MapLoaderClient } from './src/map-loader/worker-client.js'
+import { generateWithJsFallback } from './src/map-loader/js-fallback.js'
+import { serializeMetric } from './src/map-loader/protocol.js'
 
 /* =====================================================================
    NUMBER PATH (verified unique)
@@ -809,13 +812,109 @@ const newGameBtn = document.getElementById('newGame');
 const resetBtn = document.getElementById('reset');
 const hintBtn = document.getElementById('hint');
 const forfeitBtn = document.getElementById('forfeit');
+const rustMapLoader = new MapLoaderClient();
+const USE_RUST_WASM_MAP_LOADER = true;
+const SUPPORTED_MAP_SIZES = [8, 9, 10, 11];
 
 let state = null;
 
 const rand = (n) => Math.floor(Math.random() * n);
+const randomMapSize = () => SUPPORTED_MAP_SIZES[rand(SUPPORTED_MAP_SIZES.length)];
+const isSupportedMapSize = (size) => SUPPORTED_MAP_SIZES.includes(size);
 const shuffle = (a) => { for (let i = a.length-1; i > 0; i--) { const j = rand(i+1); [a[i],a[j]] = [a[j],a[i]]; } return a; };
 const key = (r,c) => r * 1000 + c;
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+const MAP_LOAD_METRICS_ENABLED = true;
+const MAP_LOAD_SLOW_CALL_MS = 1000;
+const MAP_LOAD_VERBOSE_EVENTS = new Set([
+  'newGame',
+  'generatePuzzle',
+  'generateOneCandidate',
+  'makeUnique',
+  'buildGuaranteedPuzzle',
+  'buildBoard',
+]);
+let currentMapLoadMetrics = null;
+let activeGenerationId = 0;
+
+window.runMapLoaderBench = (options = {}) => runMapLoaderBench({
+  modes: ['rust', 'js', 'random'],
+  jsGenerate: generatePuzzle,
+  jsGuaranteed: buildGuaranteedPuzzle,
+  logStage,
+  randomRuns: 3,
+  ...options,
+});
+
+function metricNow() {
+  return (window.performance && performance.now) ? performance.now() : Date.now();
+}
+
+function roundMetricMs(ms) {
+  return Math.round(ms * 100) / 100;
+}
+
+function logMapMetric(event, details) {
+  const metric = serializeMetric(event, details);
+  console.log(`[map-load-json] ${JSON.stringify(metric)}`);
+}
+
+function isGenerationCancelledError(error) {
+  return error && error.message === 'Generation cancelled';
+}
+
+function startMapLoadSession(details) {
+  if (!MAP_LOAD_METRICS_ENABLED) return;
+  currentMapLoadMetrics = {
+    startedAt: metricNow(),
+    events: [],
+  };
+  console.log('[map-load] session:start', details || {});
+}
+
+function startMapLoadMetric(name, details) {
+  if (!MAP_LOAD_METRICS_ENABLED) return () => 0;
+  const startedAt = metricNow();
+  const verbose = MAP_LOAD_VERBOSE_EVENTS.has(name);
+  if (verbose) console.log(`[map-load] ${name}:start`, details || {});
+  return (result) => {
+    const durationMs = roundMetricMs(metricNow() - startedAt);
+    const event = {
+      name,
+      durationMs,
+      ...(result || {}),
+    };
+    if (currentMapLoadMetrics) currentMapLoadMetrics.events.push(event);
+    if (verbose || durationMs >= MAP_LOAD_SLOW_CALL_MS) console.log(`[map-load] ${name}:end`, event);
+    return durationMs;
+  };
+}
+
+function finishMapLoadSession(summary) {
+  if (!MAP_LOAD_METRICS_ENABLED || !currentMapLoadMetrics) return;
+  const totalMs = roundMetricMs(metricNow() - currentMapLoadMetrics.startedAt);
+  const byName = new Map();
+  for (const event of currentMapLoadMetrics.events) {
+    const row = byName.get(event.name) || { calls: 0, totalMs: 0, maxMs: 0 };
+    row.calls++;
+    row.totalMs = roundMetricMs(row.totalMs + event.durationMs);
+    row.maxMs = Math.max(row.maxMs, event.durationMs);
+    byName.set(event.name, row);
+  }
+  const rows = [...byName.entries()].map(([name, row]) => ({
+    name,
+    calls: row.calls,
+    totalMs: row.totalMs,
+    avgMs: roundMetricMs(row.totalMs / row.calls),
+    maxMs: row.maxMs,
+  })).sort((a, b) => b.totalMs - a.totalMs);
+  console.groupCollapsed(`[map-load] session:end ${totalMs}ms`);
+  console.log('summary', { totalMs, ...(summary || {}) });
+  console.table(rows);
+  console.log('events', currentMapLoadMetrics.events);
+  console.groupEnd();
+  currentMapLoadMetrics = null;
+}
 
 function logStage(msg, cls) {
   const div = document.createElement('div');
@@ -937,7 +1036,12 @@ function remainingConnected(R, C, obs, visited, r, c, remaining) {
 
 function findHamiltonian(R, C, obs, timeBudgetMs, opts) {
   const total = R*C;
-  if (!bipartiteParityOk(R, C, obs)) return null;
+  const preferTurns = !!(opts && opts.preferTurns);
+  const endMetric = startMapLoadMetric('findHamiltonian', { R, C, total, timeBudgetMs, preferTurns });
+  if (!bipartiteParityOk(R, C, obs)) {
+    endMetric({ status: 'parity-fail' });
+    return null;
+  }
 
   let target = 0;
   for (let i = 0; i < total; i++) if (!obs[i]) target++;
@@ -945,8 +1049,13 @@ function findHamiltonian(R, C, obs, timeBudgetMs, opts) {
   const visited = new Uint8Array(total);
   const path = [];
   const startMs = Date.now();
-  const preferTurns = !!(opts && opts.preferTurns);
   const candidates = [];
+  let startsTried = 0;
+  let dfsCalls = 0;
+  let pruneChecks = 0;
+  let pruneRejects = 0;
+  let maxDepth = 0;
+  let timedOut = false;
   for (let i = 0; i < total; i++) if (!obs[i]) candidates.push(i);
   // Warnsdorff endpoints: corners and degree-2 cells are good starting cells.
   candidates.sort((a, b) => {
@@ -972,7 +1081,12 @@ function findHamiltonian(R, C, obs, timeBudgetMs, opts) {
   }
 
   function dfs(r, c, prevDir) {
-    if ((path.length & 15) === 0 && Date.now() - startMs > timeBudgetMs) return false;
+    dfsCalls++;
+    if (path.length > maxDepth) maxDepth = path.length;
+    if ((path.length & 15) === 0 && Date.now() - startMs > timeBudgetMs) {
+      timedOut = true;
+      return false;
+    }
     const ci = r*C+c;
     visited[ci] = 1;
     path.push([r,c]);
@@ -984,8 +1098,10 @@ function findHamiltonian(R, C, obs, timeBudgetMs, opts) {
     // always when nearing the end (where impossibility is more likely
     // and the remaining region is small enough that scans are cheap).
     const shouldPrune = remaining < 30 || (path.length % 4 === 0);
+    if (shouldPrune) pruneChecks++;
     if (shouldPrune && (!remainingConnected(R, C, obs, visited, r, c, remaining) ||
         tooManyDeadEnds(R, C, obs, visited, -1))) {
+      pruneRejects++;
       visited[ci] = 0;
       path.pop();
       return false;
@@ -1022,12 +1138,39 @@ function findHamiltonian(R, C, obs, timeBudgetMs, opts) {
   }
 
   for (const idx of candidates) {
-    if (Date.now() - startMs > timeBudgetMs) return null;
+    if (Date.now() - startMs > timeBudgetMs) {
+      endMetric({ status: 'timeout', target, startsTried, dfsCalls, pruneChecks, pruneRejects, maxDepth });
+      return null;
+    }
+    startsTried++;
     visited.fill(0);
     path.length = 0;
     const r = Math.floor(idx / C), c = idx % C;
-    if (dfs(r, c, null)) return path.slice();
+    if (dfs(r, c, null)) {
+      const result = path.slice();
+      endMetric({
+        status: 'success',
+        target,
+        startsTried,
+        dfsCalls,
+        pruneChecks,
+        pruneRejects,
+        maxDepth,
+        pathLength: result.length,
+      });
+      return result;
+    }
+    if (timedOut) break;
   }
+  endMetric({
+    status: timedOut ? 'timeout' : 'no-path',
+    target,
+    startsTried,
+    dfsCalls,
+    pruneChecks,
+    pruneRejects,
+    maxDepth,
+  });
   return null;
 }
 
@@ -1041,6 +1184,15 @@ function findUpToTwoSolutions(R, C, obs, startCell, endCell, waypoints, timeBudg
   const total = R*C;
   let target = 0;
   for (let i = 0; i < total; i++) if (!obs[i]) target++;
+  const endMetric = startMapLoadMetric('findUpToTwoSolutions', {
+    R,
+    C,
+    total,
+    target,
+    timeBudgetMs,
+    waypointCount: waypoints.length,
+    hasEndCell: endCell !== null,
+  });
 
   // step (1-indexed) -> required cell idx
   const stepToCell = new Map();
@@ -1058,8 +1210,13 @@ function findUpToTwoSolutions(R, C, obs, startCell, endCell, waypoints, timeBudg
   const solutions = [];
   const startMs = Date.now();
   let aborted = false;
+  let recurCalls = 0;
+  let maxDepth = 0;
+  let branchCount = 0;
 
   function recur(r, c) {
+    recurCalls++;
+    if (pathLen > maxDepth) maxDepth = pathLen;
     if (solutions.length >= 2 || aborted) return;
     if ((pathLen & 31) === 0 && Date.now() - startMs > timeBudgetMs) { aborted = true; return; }
 
@@ -1098,6 +1255,7 @@ function findUpToTwoSolutions(R, C, obs, startCell, endCell, waypoints, timeBudg
         nbrs.push([nr, nc, cnt]);
       }
       nbrs.sort((a,b) => a[2]-b[2]);
+      branchCount += nbrs.length;
       for (const [nr,nc] of nbrs) {
         recur(nr, nc);
         if (solutions.length >= 2 || aborted) break;
@@ -1109,7 +1267,15 @@ function findUpToTwoSolutions(R, C, obs, startCell, endCell, waypoints, timeBudg
   }
 
   recur(startCell[0], startCell[1]);
-  return { solutions, aborted };
+  const result = { solutions, aborted };
+  endMetric({
+    status: aborted ? 'timeout' : `solutions-${solutions.length}`,
+    solutions: solutions.length,
+    recurCalls,
+    maxDepth,
+    branchCount,
+  });
+  return result;
 }
 
 function makeUnique(R, C, obs, path, timeBudgetMs, log) {
@@ -1119,29 +1285,52 @@ function makeUnique(R, C, obs, path, timeBudgetMs, log) {
   const endCell = path[total-1];
   const wpSteps = new Set([1, total]);
   const MAX_WAYPOINTS = 15;
+  const endMetric = startMapLoadMetric('makeUnique', { R, C, total, timeBudgetMs, maxWaypoints: MAX_WAYPOINTS });
+  let iterations = 0;
+  let solverCalls = 0;
+  let solverMs = 0;
+  let addedWaypoints = 0;
+  const finishUniqueMetric = (status, details = {}) => endMetric({
+    status,
+    waypointCount: wpSteps.size,
+    iterations,
+    solverCalls,
+    solverMs: roundMetricMs(solverMs),
+    addedWaypoints,
+    ...details,
+  });
 
   while (true) {
+    iterations++;
     if (Date.now() - startMs > timeBudgetMs) {
       log(`timeout after ${wpSteps.size} waypoints`, 'fail');
+      finishUniqueMetric('timeout');
       return null;
     }
     if (wpSteps.size > MAX_WAYPOINTS) {
       log(`exceeded max ${MAX_WAYPOINTS} waypoints`, 'fail');
+      finishUniqueMetric('max-waypoints');
       return null;
     }
     const wpArr = [...wpSteps].sort((a,b)=>a-b).map(s => ({ step: s, pos: path[s-1] }));
     const remaining = timeBudgetMs - (Date.now() - startMs);
+    const solveStart = metricNow();
+    solverCalls++;
     const result = findUpToTwoSolutions(R, C, obs, startCell, endCell, wpArr, Math.min(remaining, 2500));
+    solverMs += metricNow() - solveStart;
     if (result.aborted) {
       log(`solver timeout @ ${wpSteps.size} waypoints`, 'fail');
+      finishUniqueMetric('solver-timeout');
       return null;
     }
     if (result.solutions.length === 0) {
       log(`solver found 0 solutions (bug)`, 'fail');
+      finishUniqueMetric('zero-solutions');
       return null;
     }
     if (result.solutions.length === 1) {
       log(`unique with ${wpSteps.size} waypoints`, 'ok');
+      finishUniqueMetric('unique');
       return wpArr;
     }
 
@@ -1157,6 +1346,7 @@ function makeUnique(R, C, obs, path, timeBudgetMs, log) {
     else if (differs(s2)) alt = s2;
     if (!alt) {
       log(`solutions identical (bug)`, 'fail');
+      finishUniqueMetric('identical-solutions');
       return null;
     }
     // Collect ALL diverging steps — pinning any one eliminates `alt`.
@@ -1214,7 +1404,11 @@ function makeUnique(R, C, obs, path, timeBudgetMs, log) {
       }
       candidates.push({ step, minCheb, trickiness, gapSize, bisection, buffer, minStepGap });
     }
-    if (candidates.length === 0) { log(`no divergence (bug)`, 'fail'); return null; }
+    if (candidates.length === 0) {
+      log(`no divergence (bug)`, 'fail');
+      finishUniqueMetric('no-divergence');
+      return null;
+    }
     candidates.sort((a, b) => {
       const aOk = a.minCheb >= MIN_WP_CHEBYSHEV ? 0 : 1;
       const bOk = b.minCheb >= MIN_WP_CHEBYSHEV ? 0 : 1;
@@ -1226,6 +1420,7 @@ function makeUnique(R, C, obs, path, timeBudgetMs, log) {
     });
     const newStep = candidates[0].step;
     wpSteps.add(newStep);
+    addedWaypoints++;
     log(`split @ step ${newStep}, ${wpSteps.size} waypoints`);
   }
 }
@@ -1767,25 +1962,63 @@ async function generateOneCandidate(R, C, timeBudgetMs, logPrefix) {
   const lo = Math.max(minObs, Math.floor(total * 0.20));
   const hi = Math.max(lo + 3, Math.floor(total * 0.32));
   const obsTarget = lo + rand(hi - lo + 1);
+  const endMetric = startMapLoadMetric('generateOneCandidate', {
+    R,
+    C,
+    total,
+    timeBudgetMs,
+    logPrefix: logPrefix.trim(),
+    obsTarget,
+  });
 
   let foundation = null;
+  let foundationStrategy = null;
+  let bridsonAttempts = 0;
+  let scatteredAttempts = 0;
+  let fallbackAttempts = 0;
+  let bridsonMs = 0;
+  let scatteredMs = 0;
+  let fallbackMs = 0;
   // Strategy A (primary): Bridson Poisson-disk + parity rebalance + Ham-
   // potential pre-validation. Designs a good layout, doesn't repair after.
   for (let i = 0; i < 5 && !foundation; i++) {
     if (Date.now() - start > timeBudgetMs * 0.5) break;
+    const attemptStart = metricNow();
+    bridsonAttempts++;
     foundation = buildFoundationBridson(R, C, obsTarget, (m, c) => logStage(`  ${logPrefix}${m}`, c));
+    bridsonMs += metricNow() - attemptStart;
+    if (foundation) foundationStrategy = 'bridson';
   }
   // Strategy B (secondary): legacy scattered seeder with greedy repair.
   for (let i = 0; i < 3 && !foundation; i++) {
     if (Date.now() - start > timeBudgetMs * 0.75) break;
+    const attemptStart = metricNow();
+    scatteredAttempts++;
     foundation = buildFoundationScattered(R, C, obsTarget, (m, c) => logStage(`  ${logPrefix}${m}`, c));
+    scatteredMs += metricNow() - attemptStart;
+    if (foundation) foundationStrategy = 'scattered';
   }
   // Strategy C (last-resort): trailing-tail foundation — guaranteed Ham
   // but clusters obstacles, so the post-pass spreader will fire on it.
   for (let i = 0; i < 3 && !foundation; i++) {
+    const attemptStart = metricNow();
+    fallbackAttempts++;
     foundation = buildFoundation(R, C);
+    fallbackMs += metricNow() - attemptStart;
+    if (foundation) foundationStrategy = 'tail-fallback';
   }
-  if (!foundation) return null;
+  if (!foundation) {
+    endMetric({
+      status: 'no-foundation',
+      bridsonAttempts,
+      scatteredAttempts,
+      fallbackAttempts,
+      bridsonMs: roundMetricMs(bridsonMs),
+      scatteredMs: roundMetricMs(scatteredMs),
+      fallbackMs: roundMetricMs(fallbackMs),
+    });
+    return null;
+  }
   let obs = foundation.obs;
   let ham = foundation.ham;
   let nObs = 0;
@@ -1795,16 +2028,23 @@ async function generateOneCandidate(R, C, timeBudgetMs, logPrefix) {
   // Ham-preserving spread pass — crucial when the trailing-tail fallback
   // produced a column-cluster. Up to 12 swaps; reverts any swap that breaks
   // connectivity / parity / Hamiltonicity.
+  const spreadStart = metricNow();
   const spread = spreadObstaclesPreserveHam(R, C, obs, ham, 12, (m, c) => logStage(`  ${logPrefix}${m}`, c));
+  const spreadMs = metricNow() - spreadStart;
   obs = spread.obs;
   ham = spread.ham;
 
   let iter = 0;
   const MAX_ITER = 40;
+  let uniqueCalls = 0;
+  let uniqueMs = 0;
   while (iter++ < MAX_ITER && Date.now() - start < timeBudgetMs) {
     await sleep(0);
     const remaining = timeBudgetMs - (Date.now() - start);
+    const uniqueStart = metricNow();
+    uniqueCalls++;
     const wpArr = makeUnique(R, C, obs, ham, Math.min(3000, remaining), (m, c) => logStage(`  ${logPrefix}${m}`, c));
+    uniqueMs += metricNow() - uniqueStart;
     if (wpArr) {
       let turns = 0;
       for (let k = 1; k < ham.length - 1; k++) {
@@ -1817,6 +2057,24 @@ async function generateOneCandidate(R, C, timeBudgetMs, logPrefix) {
       let difficulty = 'Medium';
       if (R >= 9 || turnRatio > 0.40) difficulty = 'Hard';
       if ((R >= 10 && turnRatio > 0.40) || wpArr.length >= 12 || (countObs/(R*C)) > 0.22) difficulty = 'Expert';
+      endMetric({
+        status: 'success',
+        foundationStrategy,
+        obstacleCount: countObs,
+        pathLength: ham.length,
+        waypointCount: wpArr.length,
+        difficulty,
+        iterations: iter,
+        bridsonAttempts,
+        scatteredAttempts,
+        fallbackAttempts,
+        bridsonMs: roundMetricMs(bridsonMs),
+        scatteredMs: roundMetricMs(scatteredMs),
+        fallbackMs: roundMetricMs(fallbackMs),
+        spreadMs: roundMetricMs(spreadMs),
+        uniqueCalls,
+        uniqueMs: roundMetricMs(uniqueMs),
+      });
       return { R, C, obstacles: obs, solution: ham, waypoints: wpArr, difficulty };
     }
     const tightened = tightenViaTrim(R, C, obs, ham);
@@ -1824,6 +2082,20 @@ async function generateOneCandidate(R, C, timeBudgetMs, logPrefix) {
     obs = tightened.obs;
     ham = tightened.ham;
   }
+  endMetric({
+    status: 'timeout',
+    foundationStrategy,
+    iterations: iter - 1,
+    bridsonAttempts,
+    scatteredAttempts,
+    fallbackAttempts,
+    bridsonMs: roundMetricMs(bridsonMs),
+    scatteredMs: roundMetricMs(scatteredMs),
+    fallbackMs: roundMetricMs(fallbackMs),
+    spreadMs: roundMetricMs(spreadMs),
+    uniqueCalls,
+    uniqueMs: roundMetricMs(uniqueMs),
+  });
   return null;
 }
 
@@ -1832,21 +2104,34 @@ async function generateOneCandidate(R, C, timeBudgetMs, logPrefix) {
  *
  * `relaxLevel` (0 = strict, higher = looser) is bumped by `newGame` on
  * each retry. Floors shrink linearly so the generator is guaranteed to
- * accept *something* by relaxLevel 5. Grid size also shrinks under
- * pressure (11×11 is hardest for the solver). */
-async function generatePuzzle(relaxLevel) {
+ * accept *something* by relaxLevel 5. When a target size is provided by the
+ * Rust fallback path, retries preserve that visible size. */
+async function generatePuzzle(relaxLevel, options = {}) {
   relaxLevel = relaxLevel || 0;
   const overallStart = Date.now();
   const overallBudget = 22000;
   const TARGET_CANDIDATES = 3;
-  // Size: under pressure, drop the 11×11 option and bias smaller.
-  const sizeRoll = Math.random();
+  const requestedSize = isSupportedMapSize(options.targetSize) ? options.targetSize : null;
   let size;
-  if (relaxLevel === 0)      size = sizeRoll < 0.20 ? 9 : sizeRoll < 0.65 ? 10 : 11;
-  else if (relaxLevel === 1) size = sizeRoll < 0.30 ? 9 : sizeRoll < 0.85 ? 10 : 11;
-  else if (relaxLevel === 2) size = sizeRoll < 0.50 ? 9 : 10;
-  else                       size = sizeRoll < 0.50 ? 8 : 9;
+  if (requestedSize) {
+    size = requestedSize;
+  } else {
+    // Size: under pressure, drop the 11×11 option and bias smaller.
+    const sizeRoll = Math.random();
+    if (relaxLevel === 0)      size = sizeRoll < 0.20 ? 9 : sizeRoll < 0.65 ? 10 : 11;
+    else if (relaxLevel === 1) size = sizeRoll < 0.30 ? 9 : sizeRoll < 0.85 ? 10 : 11;
+    else if (relaxLevel === 2) size = sizeRoll < 0.50 ? 9 : 10;
+    else                       size = sizeRoll < 0.50 ? 8 : 9;
+  }
   const R = size, C = size;
+  const endMetric = startMapLoadMetric('generatePuzzle', {
+    relaxLevel,
+    R,
+    C,
+    overallBudget,
+    targetCandidates: TARGET_CANDIDATES,
+    requestedSize,
+  });
 
   // Difficulty-driven hard floors. A candidate must clear all thresholds
   // to be accepted — otherwise we keep generating until we get a good one
@@ -1896,42 +2181,73 @@ async function generatePuzzle(relaxLevel) {
   const pool = winners.length ? winners : nearMisses;
   if (pool.length === 0) {
     logStage(`tournament empty after ${attempt} tries`, 'fail');
+    endMetric({ status: 'empty', attempts: attempt, winners: winners.length, nearMisses: nearMisses.length });
     return null;
   }
   pool.sort((a, b) => b.score - a.score);
   const best = pool[0];
   logStage(`winner: score ${best.score.toFixed(1)} (${winners.length?'qualified':'best-effort'})`, 'ok');
+  endMetric({
+    status: 'success',
+    attempts: attempt,
+    winners: winners.length,
+    nearMisses: nearMisses.length,
+    bestScore: roundMetricMs(best.score),
+    qualified: winners.length > 0,
+    difficulty: best.difficulty,
+    waypointCount: best.waypoints.length,
+    pathLength: best.solution.length,
+  });
   return best;
 }
 
 /* Guaranteed-success fallback. Used when the tournament cannot produce
  * any candidate after 6 progressively-relaxed retries. Builds the most
  * permissive possible puzzle:
- *   - 8×8 grid (smallest the solver handles)
+ *   - selected supported grid size, or 8×8 when called standalone
  *   - no obstacles (full-grid Ham path always exists)
  *   - generous makeUnique budget
  *   - degrades to "endpoints-only" waypoints if even makeUnique times out
  *
  * The puzzle won't be hard, but it's always playable. */
-async function buildGuaranteedPuzzle() {
-  const R = 8, C = 8;
-  const total = R*C;
-  const obs = new Uint8Array(total);
-  let ham = null;
-  for (let i = 0; i < 5 && !ham; i++) {
-    ham = findHamiltonian(R, C, obs, 3000, { preferTurns: false });
+function fullGridSnakePath(R, C) {
+  const path = [];
+  for (let r = 0; r < R; r++) {
+    if (r % 2 === 0) {
+      for (let c = 0; c < C; c++) path.push([r, c]);
+    } else {
+      for (let c = C - 1; c >= 0; c--) path.push([r, c]);
+    }
   }
-  if (!ham) return null;
+  return path;
+}
+
+async function buildGuaranteedPuzzle(options = {}) {
+  const size = isSupportedMapSize(options.targetSize) ? options.targetSize : 8;
+  const R = size, C = size;
+  const total = R*C;
+  const endMetric = startMapLoadMetric('buildGuaranteedPuzzle', { R, C, total });
+  const obs = new Uint8Array(total);
+  const ham = fullGridSnakePath(R, C);
   let wpArr = makeUnique(R, C, obs, ham, 6000, () => {});
+  let endpointsOnly = false;
   if (!wpArr) {
     // Degrade further: only the two endpoints as waypoints. Not unique
     // but at least playable end-to-end.
+    endpointsOnly = true;
     wpArr = [
       { step: 1, pos: ham[0] },
       { step: ham.length, pos: ham[ham.length - 1] },
     ];
   }
-  logStage(`guaranteed: 8×8, ${wpArr.length} waypoints`, 'ok');
+  logStage(`guaranteed: ${R}×${C}, ${wpArr.length} waypoints`, 'ok');
+  endMetric({
+    status: 'success',
+    hamStrategy: 'full-grid-snake',
+    endpointsOnly,
+    pathLength: ham.length,
+    waypointCount: wpArr.length,
+  });
   return { R, C, obstacles: obs, solution: ham, waypoints: wpArr, difficulty: 'Easy' };
 }
 
@@ -1940,6 +2256,12 @@ async function buildGuaranteedPuzzle() {
 ================================================================= */
 
 async function newGame() {
+  const generationId = ++activeGenerationId;
+  const isCurrentGeneration = () => generationId === activeGenerationId;
+  const targetSize = randomMapSize();
+  rustMapLoader.cancel();
+  startMapLoadSession({ action: 'newGame', targetSize });
+  const endMetric = startMapLoadMetric('newGame', { targetSize });
   newGameBtn.disabled = true;
   resetBtn.disabled = true;
   hideWin();
@@ -1948,27 +2270,59 @@ async function newGame() {
 
   // Yield so UI updates
   await sleep(20);
+  if (!isCurrentGeneration()) return;
 
   let puzzle = null;
-  // Layered retry: each attempt loosens the quality floors. By relax=5
-  // basically every layout qualifies, so we always have a winner.
-  for (let attempt = 0; attempt < 6 && !puzzle; attempt++) {
-    puzzle = await generatePuzzle(attempt);
+
+  try {
+    if (USE_RUST_WASM_MAP_LOADER) {
+      puzzle = await rustMapLoader.generate({
+        sizes: [targetSize],
+        targetMs: 5000,
+        maxMs: 10000,
+        onProgress: (event) => logStage(event.stage),
+      });
+    }
+  } catch (error) {
+    if (isGenerationCancelledError(error)) {
+      if (!isCurrentGeneration()) return;
+      genOverlay.classList.remove('show');
+      newGameBtn.disabled = false;
+      resetBtn.disabled = false;
+      endMetric({ status: 'cancelled' });
+      finishMapLoadSession({ status: 'cancelled' });
+      return;
+    }
+    logMapMetric('rust-wasm:error', {
+      status: 'fallback',
+      message: error && error.message ? error.message : String(error),
+    });
+    console.warn('[map-load] rust-wasm-fallback', {
+      message: error && error.message ? error.message : String(error),
+    });
   }
-  // Guaranteed fallback: full-grid Hamiltonian, no obstacles, makeUnique
-  // with a long budget. This never returns null short of catastrophic bugs.
+
+  if (!isCurrentGeneration()) return;
+
   if (!puzzle) {
-    logStage(`⚠ tournament exhausted — building guaranteed puzzle`, 'fail');
-    puzzle = await buildGuaranteedPuzzle();
+    puzzle = await generateWithJsFallback(generatePuzzle, buildGuaranteedPuzzle, logStage, { targetSize });
   }
+
+  if (!isCurrentGeneration()) return;
 
   genOverlay.classList.remove('show');
   newGameBtn.disabled = false;
   resetBtn.disabled = false;
 
   if (!puzzle) {
+    endMetric({ status: 'failed' });
+    finishMapLoadSession({ status: 'failed' });
     alert('Generation failed. Please try again.');
     return;
+  }
+
+  if (puzzle.metrics) {
+    logMapMetric('rust-wasm:result', puzzle.metrics);
   }
 
   const playable = puzzle.solution.length;
@@ -1999,9 +2353,26 @@ async function newGame() {
   resetTimer();
   updateStats();
   updateNextTargetHighlight();
+  endMetric({
+    status: 'success',
+    R: puzzle.R,
+    C: puzzle.C,
+    difficulty: puzzle.difficulty,
+    playable,
+    waypointCount: puzzle.waypoints.length,
+  });
+  finishMapLoadSession({
+    status: 'success',
+    R: puzzle.R,
+    C: puzzle.C,
+    difficulty: puzzle.difficulty,
+    playable,
+    waypointCount: puzzle.waypoints.length,
+  });
 }
 
 function buildBoard() {
+  const endMetric = startMapLoadMetric('buildBoard', { R: state.R, C: state.C, playable: state.playable });
   boardEl.innerHTML = '';
   const { R, C } = state;
   const wrap = document.querySelector('.board-wrap');
@@ -2037,6 +2408,7 @@ function buildBoard() {
       boardEl.appendChild(cell);
     }
   }
+  endMetric({ status: 'success', cellCount: R*C });
 }
 
 function getCellAtPoint(x, y) {

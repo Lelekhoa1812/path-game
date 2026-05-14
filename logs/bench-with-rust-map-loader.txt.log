@@ -1,0 +1,9 @@
+path.html:869 [map-load] session:start Object
+path.html:876 [map-load] newGame:start Object
+path.html:856 [map-load-json] {"status":"success","seed":1778739162643,"size":9,"quality":"balanced","qualityScore":0.96,"phaseTimings":{"candidateMs":171,"qualityMs":0,"totalMs":171},"totalMs":171,"targetMs":5000,"maxMs":10000,"degradationLevel":0,"candidateAttempts":40,"solverCalls":5342729,"uniqueChecks":36,"cancelled":false,"fallback":false,"event":"rust-wasm:result"}
+path.html:876 [map-load] buildBoard:start Object
+path.html:885 [map-load] buildBoard:end Object
+path.html:885 [map-load] newGame:end Object
+path.html:908 [map-load] session:end 720.8ms
+path.html:876 [map-load] buildBoard:start {R: 9, C: 9, playable: 60}
+path.html:885 [map-load] buildBoard:end {name: 'buildBoard', durationMs: 0.6, status: 'success', cellCount: 81}
