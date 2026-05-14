@@ -1,0 +1,15 @@
+{
+  "name": "map_loader_wasm",
+  "type": "module",
+  "version": "0.1.0",
+  "files": [
+    "map_loader_wasm_bg.wasm",
+    "map_loader_wasm.js",
+    "map_loader_wasm.d.ts"
+  ],
+  "main": "map_loader_wasm.js",
+  "types": "map_loader_wasm.d.ts",
+  "sideEffects": [
+    "./snippets/*"
+  ]
+}
