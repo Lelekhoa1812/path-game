@@ -213,7 +213,7 @@
     border-color: rgba(255, 210, 74, 0.5);
     box-shadow: 0 0 12px rgba(255, 210, 74, 0.3);
   }
-  .help-btn {
+  .help-btn, .github-btn {
     width: 30px; height: 30px;
     border-radius: 50%;
     background: rgba(0, 0, 0, 0.6);
@@ -231,10 +231,32 @@
     transition: transform 140ms ease, box-shadow 140ms ease, background 140ms ease;
     margin-left: 4px;
   }
-  .help-btn:hover {
+  .help-btn:hover, .github-btn:hover {
     transform: translateY(-1px) scale(1.05);
     background: rgba(181, 123, 255, 0.18);
     box-shadow: 0 0 18px rgba(181, 123, 255, 0.7);
+  }
+  .github-btn {
+    color: #fff;
+    text-decoration: none;
+    position: relative;
+  }
+  .github-btn svg {
+    width: 17px;
+    height: 17px;
+    display: block;
+    fill: currentColor;
+    filter: drop-shadow(0 0 5px rgba(255, 255, 255, 0.45));
+  }
+  .github-btn::after {
+    content: "★";
+    position: absolute;
+    top: -5px;
+    right: -5px;
+    color: var(--accent3);
+    font-size: 11px;
+    line-height: 1;
+    text-shadow: 0 0 8px rgba(255, 210, 74, 0.85);
   }
   .difficulty.expert {
     background: rgba(255, 67, 196, 0.15);
@@ -696,6 +718,11 @@
       <div class="stat"><span class="label">Step</span><span class="value" id="step">0 / 0</span></div>
       <div class="stat"><span class="label">Filled</span><span class="value" id="filled">0%</span></div>
       <button class="help-btn" id="helpBtn" aria-label="How to play" title="How to play">?</button>
+      <a class="github-btn" href="https://github.com/Lelekhoa1812/path-game" target="_blank" rel="noopener noreferrer" aria-label="Star path-game on GitHub" title="Star path-game on GitHub">
+        <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+          <path d="M8 0C3.58 0 0 3.64 0 8.13c0 3.59 2.29 6.63 5.47 7.71.4.07.55-.18.55-.39 0-.19-.01-.83-.01-1.5-2.01.38-2.53-.5-2.69-.96-.09-.24-.48-.96-.82-1.16-.28-.15-.68-.52-.01-.53.63-.01 1.08.59 1.23.83.72 1.23 1.87.88 2.33.67.07-.53.28-.88.51-1.08-1.78-.2-3.64-.9-3.64-4.01 0-.89.31-1.62.82-2.19-.08-.2-.36-1.04.08-2.16 0 0 .67-.22 2.2.84A7.44 7.44 0 0 1 8 3.93c.68 0 1.36.09 2 .27 1.53-1.06 2.2-.84 2.2-.84.44 1.12.16 1.96.08 2.16.51.57.82 1.29.82 2.19 0 3.12-1.87 3.81-3.65 4.01.29.25.54.74.54 1.5 0 1.08-.01 1.95-.01 2.22 0 .21.15.47.55.39A8.12 8.12 0 0 0 16 8.13C16 3.64 12.42 0 8 0Z"/>
+        </svg>
+      </a>
     </div>
   </header>
 
